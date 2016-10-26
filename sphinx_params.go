@@ -17,6 +17,8 @@ const (
 	hashRhoSuffix   = byte(0xFF)
 	hashBlindSuffix = byte(0xFE)
 	hashMuSuffix    = byte(0xFD)
+	hashPiSuffix    = byte(0xFC)
+	hashTauSuffix   = byte(0xFB)
 )
 
 type GroupCurve25519 struct {
@@ -159,5 +161,17 @@ func (s *SphinxParams) HashRho(secret [secretKeyLen]byte) [32]byte {
 func (s *SphinxParams) HashMu(secret [secretKeyLen]byte) [32]byte {
 	h := make([]byte, 41)
 	h = append(secret[0:secretKeyLen], hashMuSuffix)
+	return s.Hash(h[0:32])
+}
+
+func (s *SphinxParams) HashPi(secret [secretKeyLen]byte) [32]byte {
+	h := make([]byte, 41)
+	h = append(secret[0:secretKeyLen], hashPiSuffix)
+	return s.Hash(h[0:32])
+}
+
+func (s *SphinxParams) HashTau(secret [secretKeyLen]byte) [32]byte {
+	h := make([]byte, 41)
+	h = append(secret[0:secretKeyLen], hashTauSuffix)
 	return s.Hash(h[0:32])
 }
