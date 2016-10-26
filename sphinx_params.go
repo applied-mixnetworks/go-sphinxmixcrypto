@@ -1,8 +1,19 @@
 package sphinxnetcrypto
 
 import (
-	"golang.org/x/crypto/curve25519"
+	"bytes"
 	"io"
+
+	"git.schwanenlied.me/yawning/chacha20"
+	"github.com/minio/blake2b-simd"
+	"golang.org/x/crypto/curve25519"
+)
+
+const (
+	chachaNonceLen = 8
+	chachaKeyLen   = 32
+	secretKeyLen   = chachaKeyLen + chachaNonceLen
+	hashRhoPrefix  = byte(0xFF)
 )
 
 type GroupCurve25519 struct {
@@ -58,4 +69,61 @@ func (g *GroupCurve25519) MultiExpOn(base [32]byte, exps [][32]byte) [32]byte {
 
 func (g *GroupCurve25519) MakeExp(data [32]byte) [32]byte {
 	return g.makeSecret(data)
+}
+
+type SphinxParams struct {
+	pki       SphinxPKI
+	nymServer SphinxNymServer
+	group     *GroupCurve25519
+	r         int
+	k         int
+	m         int
+	// XXX TODO: add clients map: destniation -> client
+}
+
+// NewSphinxParams creates a new SphinxParams struct
+// with max mixnet nodes per route set to r
+func NewSphinxParams(r int) *SphinxParams {
+	s := SphinxParams{
+		r:     r,
+		group: NewGroupCurve25519(),
+	}
+	return &s
+}
+
+func (s *SphinxParams) Hash(data []byte) [32]byte {
+	return blake2b.Sum256(data)
+}
+
+// HashRho computes a hash of secret to use as a key for Rho our PRG
+func (s *SphinxParams) HashRho(secret [secretKeyLen]byte) [32]byte {
+	h := make([]byte, 41)
+	h = append(secret[0:secretKeyLen], hashRhoPrefix)
+	return s.Hash(h[0:32])
+}
+
+// Rho is our PRG; key is of length secretKeyLen,
+// output is of length (2r+3)k where k is secretKeyLen
+func (s *SphinxParams) Rho(key [secretKeyLen]byte) ([]byte, error) {
+	chacha, err := chacha20.NewCipher(key[:chachaKeyLen], key[chachaKeyLen:chachaKeyLen+chachaNonceLen])
+	if err != nil {
+		return nil, err
+	}
+	count := (2*s.r + 3) * secretKeyLen
+	r := bytes.Repeat([]byte{0}, count)
+	chacha.XORKeyStream(r, r)
+	return r, nil
+}
+
+// Mu is our HMAC; key and output are of length secretKeyLen
+func (s *SphinxParams) Mu(key [secretKeyLen]byte, data []byte) [secretKeyLen]byte {
+	h := blake2b.NewMAC(secretKeyLen, key[:])
+	h.Reset()
+	h.Write(data)
+	var ret [secretKeyLen]byte
+	copy(ret[:], h.Sum(nil)[0:40])
+	return ret
+}
+
+func (s *SphinxParams) Pi() {
 }
