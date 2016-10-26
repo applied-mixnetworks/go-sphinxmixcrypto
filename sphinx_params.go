@@ -5,15 +5,18 @@ import (
 	"io"
 
 	"git.schwanenlied.me/yawning/chacha20"
+	"github.com/david415/go-lioness"
 	"github.com/minio/blake2b-simd"
 	"golang.org/x/crypto/curve25519"
 )
 
 const (
-	chachaNonceLen = 8
-	chachaKeyLen   = 32
-	secretKeyLen   = chachaKeyLen + chachaNonceLen
-	hashRhoPrefix  = byte(0xFF)
+	chachaNonceLen  = 8
+	chachaKeyLen    = 32
+	secretKeyLen    = chachaKeyLen + chachaNonceLen
+	hashRhoSuffix   = byte(0xFF)
+	hashBlindSuffix = byte(0xFE)
+	hashMuSuffix    = byte(0xFD)
 )
 
 type GroupCurve25519 struct {
@@ -76,30 +79,19 @@ type SphinxParams struct {
 	nymServer SphinxNymServer
 	group     *GroupCurve25519
 	r         int
-	k         int
-	m         int
+	m         int // Payload size/LIONESS block size
 	// XXX TODO: add clients map: destniation -> client
 }
 
 // NewSphinxParams creates a new SphinxParams struct
 // with max mixnet nodes per route set to r
-func NewSphinxParams(r int) *SphinxParams {
+func NewSphinxParams(r, m int) *SphinxParams {
 	s := SphinxParams{
 		r:     r,
+		m:     m,
 		group: NewGroupCurve25519(),
 	}
 	return &s
-}
-
-func (s *SphinxParams) Hash(data []byte) [32]byte {
-	return blake2b.Sum256(data)
-}
-
-// HashRho computes a hash of secret to use as a key for Rho our PRG
-func (s *SphinxParams) HashRho(secret [secretKeyLen]byte) [32]byte {
-	h := make([]byte, 41)
-	h = append(secret[0:secretKeyLen], hashRhoPrefix)
-	return s.Hash(h[0:32])
 }
 
 // Rho is our PRG; key is of length secretKeyLen,
@@ -125,5 +117,47 @@ func (s *SphinxParams) Mu(key [secretKeyLen]byte, data []byte) [secretKeyLen]byt
 	return ret
 }
 
-func (s *SphinxParams) Pi() {
+// Pi is our PRP in this case the LIONESS block cipher
+// key is of length secretKeyLen, data is of length m
+func (s *SphinxParams) Pi(key [secretKeyLen]byte, data []byte) ([]byte, error) {
+	cipher := lioness.NewLionessCipher(key[:], s.m)
+	ciphertext, err := cipher.Encrypt(data)
+	if err != nil {
+		return nil, err
+	}
+	return ciphertext, nil
+}
+
+// PiInverse implements the inverse of Pi, that is decryption
+func (s *SphinxParams) PiInverse(key [secretKeyLen]byte, data []byte) ([]byte, error) {
+	cipher := lioness.NewLionessCipher(key[:], s.m)
+	ciphertext, err := cipher.Decrypt(data)
+	if err != nil {
+		return nil, err
+	}
+	return ciphertext, nil
+}
+
+func (s *SphinxParams) Hash(data []byte) [32]byte {
+	return blake2b.Sum256(data)
+}
+
+func (s *SphinxParams) HashBlindingFactor(alpha []byte, secret [secretKeyLen]byte) [32]byte {
+	h := make([]byte, 41)
+	h = append(secret[0:secretKeyLen], hashBlindSuffix)
+	h = append(h, alpha...)
+	return s.Hash(h[0:32])
+}
+
+// HashRho computes a hash of secret to use as a key for Rho our PRG
+func (s *SphinxParams) HashRho(secret [secretKeyLen]byte) [32]byte {
+	h := make([]byte, 41)
+	h = append(secret[0:secretKeyLen], hashRhoSuffix)
+	return s.Hash(h[0:32])
+}
+
+func (s *SphinxParams) HashMu(secret [secretKeyLen]byte) [32]byte {
+	h := make([]byte, 41)
+	h = append(secret[0:secretKeyLen], hashMuSuffix)
+	return s.Hash(h[0:32])
 }
