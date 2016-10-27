@@ -120,7 +120,7 @@ func (s *Crypt) Mu(key [secretKeyLen]byte, data []byte) [secretKeyLen]byte {
 }
 
 func (s *Crypt) EncryptBlock(key [lioness.LionessKeyLen]byte, data []byte) ([]byte, error) {
-	cipher := lioness.NewLionessCipher(key, s.blockSize)
+	cipher := lioness.NewCipher(key, s.blockSize)
 	ciphertext, err := cipher.Encrypt(data)
 	if err != nil {
 		return nil, err
@@ -129,7 +129,7 @@ func (s *Crypt) EncryptBlock(key [lioness.LionessKeyLen]byte, data []byte) ([]by
 }
 
 func (s *Crypt) DecryptBlock(key [lioness.LionessKeyLen]byte, data []byte) ([]byte, error) {
-	cipher := lioness.NewLionessCipher(key, s.blockSize)
+	cipher := lioness.NewCipher(key, s.blockSize)
 	ciphertext, err := cipher.Decrypt(data)
 	if err != nil {
 		return nil, err
