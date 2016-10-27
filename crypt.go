@@ -76,41 +76,41 @@ func (g *GroupCurve25519) MakeExp(data [32]byte) [32]byte {
 	return g.makeSecret(data)
 }
 
-type SphinxParams struct {
+type Crypt struct {
 	pki       SphinxPKI
 	nymServer SphinxNymServer
 	group     *GroupCurve25519
-	r         int
-	m         int // Payload size/LIONESS block size
+	maxHops   int
+	blockSize int // Payload size
 	// XXX TODO: add clients map: destniation -> client
 }
 
-// NewSphinxParams creates a new SphinxParams struct
+// NewCrypt creates a new Crypt struct
 // with max mixnet nodes per route set to r
-func NewSphinxParams(r, m int) *SphinxParams {
-	s := SphinxParams{
-		r:     r,
-		m:     m,
-		group: NewGroupCurve25519(),
+func NewCrypt(maxHops, blockSize int) *Crypt {
+	s := Crypt{
+		maxHops:   maxHops,
+		blockSize: blockSize,
+		group:     NewGroupCurve25519(),
 	}
 	return &s
 }
 
 // Rho is our PRG; key is of length secretKeyLen,
 // output is of length (2r+3)k where k is secretKeyLen
-func (s *SphinxParams) Rho(key [secretKeyLen]byte) ([]byte, error) {
+func (s *Crypt) Rho(key [secretKeyLen]byte) ([]byte, error) {
 	chacha, err := chacha20.NewCipher(key[:chachaKeyLen], key[chachaKeyLen:chachaKeyLen+chachaNonceLen])
 	if err != nil {
 		return nil, err
 	}
-	count := (2*s.r + 3) * secretKeyLen
+	count := (2*s.maxHops + 3) * secretKeyLen
 	r := bytes.Repeat([]byte{0}, count)
 	chacha.XORKeyStream(r, r)
 	return r, nil
 }
 
 // Mu is our HMAC; key and output are of length secretKeyLen
-func (s *SphinxParams) Mu(key [secretKeyLen]byte, data []byte) [secretKeyLen]byte {
+func (s *Crypt) Mu(key [secretKeyLen]byte, data []byte) [secretKeyLen]byte {
 	h := blake2b.NewMAC(secretKeyLen, key[:])
 	h.Reset()
 	h.Write(data)
@@ -119,10 +119,8 @@ func (s *SphinxParams) Mu(key [secretKeyLen]byte, data []byte) [secretKeyLen]byt
 	return ret
 }
 
-// Pi is our PRP in this case the LIONESS block cipher
-// key is of length secretKeyLen, data is of length m
-func (s *SphinxParams) Pi(key [secretKeyLen]byte, data []byte) ([]byte, error) {
-	cipher := lioness.NewLionessCipher(key[:], s.m)
+func (s *Crypt) EncryptBlock(key [lioness.LionessKeyLen]byte, data []byte) ([]byte, error) {
+	cipher := lioness.NewLionessCipher(key, s.blockSize)
 	ciphertext, err := cipher.Encrypt(data)
 	if err != nil {
 		return nil, err
@@ -130,9 +128,8 @@ func (s *SphinxParams) Pi(key [secretKeyLen]byte, data []byte) ([]byte, error) {
 	return ciphertext, nil
 }
 
-// PiInverse implements the inverse of Pi, that is decryption
-func (s *SphinxParams) PiInverse(key [secretKeyLen]byte, data []byte) ([]byte, error) {
-	cipher := lioness.NewLionessCipher(key[:], s.m)
+func (s *Crypt) DecryptBlock(key [lioness.LionessKeyLen]byte, data []byte) ([]byte, error) {
+	cipher := lioness.NewLionessCipher(key, s.blockSize)
 	ciphertext, err := cipher.Decrypt(data)
 	if err != nil {
 		return nil, err
@@ -140,37 +137,43 @@ func (s *SphinxParams) PiInverse(key [secretKeyLen]byte, data []byte) ([]byte, e
 	return ciphertext, nil
 }
 
-func (s *SphinxParams) Hash(data []byte) [32]byte {
+func (s *Crypt) Hash(data []byte) [32]byte {
 	return blake2b.Sum256(data)
 }
 
-func (s *SphinxParams) HashBlindingFactor(alpha []byte, secret [secretKeyLen]byte) [32]byte {
+func (s *Crypt) HashBlindingFactor(alpha []byte, secret [secretKeyLen]byte) [32]byte {
 	h := make([]byte, 41)
 	h = append(secret[0:secretKeyLen], hashBlindSuffix)
 	h = append(h, alpha...)
 	return s.Hash(h[0:32])
 }
 
-// HashRho computes a hash of secret to use as a key for Rho our PRG
-func (s *SphinxParams) HashRho(secret [secretKeyLen]byte) [32]byte {
+func (s *Crypt) HashRho(secret [secretKeyLen]byte) [32]byte {
 	h := make([]byte, 41)
 	h = append(secret[0:secretKeyLen], hashRhoSuffix)
 	return s.Hash(h[0:32])
 }
 
-func (s *SphinxParams) HashMu(secret [secretKeyLen]byte) [32]byte {
+func (s *Crypt) HashMu(secret [secretKeyLen]byte) [32]byte {
 	h := make([]byte, 41)
 	h = append(secret[0:secretKeyLen], hashMuSuffix)
 	return s.Hash(h[0:32])
 }
 
-func (s *SphinxParams) HashPi(secret [secretKeyLen]byte) [32]byte {
-	h := make([]byte, 41)
-	h = append(secret[0:secretKeyLen], hashPiSuffix)
-	return s.Hash(h[0:32])
+// CreateBlockCipherKey creates our LIONESS block cipher key given a 40 byte secret
+func (s *Crypt) CreateBlockCipherKey(secret [secretKeyLen]byte) ([lioness.LionessKeyLen]byte, error) {
+	var ret [lioness.LionessKeyLen]byte
+	chacha, err := chacha20.NewCipher(secret[:chachaKeyLen], secret[chachaKeyLen:chachaKeyLen+chachaNonceLen])
+	if err != nil {
+		return ret, err
+	}
+	r := bytes.Repeat([]byte{0}, lioness.LionessKeyLen)
+	chacha.XORKeyStream(r, r)
+	copy(ret[:], r)
+	return ret, nil
 }
 
-func (s *SphinxParams) HashTau(secret [secretKeyLen]byte) [32]byte {
+func (s *Crypt) HashTau(secret [secretKeyLen]byte) [32]byte {
 	h := make([]byte, 41)
 	h = append(secret[0:secretKeyLen], hashTauSuffix)
 	return s.Hash(h[0:32])
