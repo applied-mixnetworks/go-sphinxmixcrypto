@@ -11,14 +11,16 @@ import (
 )
 
 const (
-	chachaNonceLen  = 8
-	chachaKeyLen    = 32
-	secretKeyLen    = chachaKeyLen + chachaNonceLen
-	hashRhoSuffix   = byte(0xFF)
-	hashBlindSuffix = byte(0xFE)
-	hashMuSuffix    = byte(0xFD)
-	hashPiSuffix    = byte(0xFC)
-	hashTauSuffix   = byte(0xFB)
+	securityParameter = 16
+	keyLen            = 32 // curve25519 uses 32 byte keys
+	chachaNonceLen    = 8
+	chachaKeyLen      = 32
+	secretKeyLen      = chachaKeyLen + chachaNonceLen
+	hashRhoPrefix     = byte(0xFF)
+	hashBlindPrefix   = byte(0xFE)
+	hashMuPrefix      = byte(0xFD)
+	hashPiPrefix      = byte(0xFC)
+	hashTauPrefix     = byte(0xFB)
 )
 
 type GroupCurve25519 struct {
@@ -77,12 +79,9 @@ func (g *GroupCurve25519) MakeExp(data [32]byte) [32]byte {
 }
 
 type Crypt struct {
-	pki       SphinxPKI
-	nymServer SphinxNymServer
-	group     *GroupCurve25519
 	maxHops   int
-	blockSize int // Payload size
-	// XXX TODO: add clients map: destniation -> client
+	blockSize int
+	group     *GroupCurve25519
 }
 
 // NewCrypt creates a new Crypt struct
@@ -96,30 +95,35 @@ func NewCrypt(maxHops, blockSize int) *Crypt {
 	return &s
 }
 
-// Rho is our PRG; key is of length secretKeyLen,
-// output is of length (2r+3)k where k is secretKeyLen
-func (s *Crypt) Rho(key [secretKeyLen]byte) ([]byte, error) {
+func (s *Crypt) generateStreamCipherKey(secret [32]byte) [secretKeyLen]byte {
+	// XXX or we could set the nonce to all zeros since the key is only used once
+	h := make([]byte, 33)
+	h = append(h, hashRhoPrefix)
+	h = append(h, secret[0:32])
+	return blake2b.Sum512(h[0:33])[0:secretKeyLen]
+}
+
+func (s *Crypt) generateCipherStream(key [secretKeyLen]byte, numBytes uint) ([]byte, error) {
 	chacha, err := chacha20.NewCipher(key[:chachaKeyLen], key[chachaKeyLen:chachaKeyLen+chachaNonceLen])
 	if err != nil {
 		return nil, err
 	}
-	count := (2*s.maxHops + 3) * secretKeyLen
-	r := bytes.Repeat([]byte{0}, count)
+	r := make([]byte, numBytes)
 	chacha.XORKeyStream(r, r)
 	return r, nil
 }
 
-// Mu is our HMAC; key and output are of length secretKeyLen
-func (s *Crypt) Mu(key [secretKeyLen]byte, data []byte) [secretKeyLen]byte {
+// HMAC authenticates our message.
+func (s *Crypt) HMAC(key [secretKeyLen]byte, data []byte) [securityParameter]byte {
 	h := blake2b.NewMAC(secretKeyLen, key[:])
 	h.Reset()
 	h.Write(data)
-	var ret [secretKeyLen]byte
-	copy(ret[:], h.Sum(nil)[0:40])
+	var ret [securityParameter]byte
+	copy(ret[:], h.Sum(nil)[0:securityParameter])
 	return ret
 }
 
-func (s *Crypt) EncryptBlock(key [lioness.LionessKeyLen]byte, data []byte) ([]byte, error) {
+func (s *Crypt) EncryptBlock(key [lioness.KeyLen]byte, data []byte) ([]byte, error) {
 	cipher := lioness.NewCipher(key, s.blockSize)
 	ciphertext, err := cipher.Encrypt(data)
 	if err != nil {
@@ -128,7 +132,7 @@ func (s *Crypt) EncryptBlock(key [lioness.LionessKeyLen]byte, data []byte) ([]by
 	return ciphertext, nil
 }
 
-func (s *Crypt) DecryptBlock(key [lioness.LionessKeyLen]byte, data []byte) ([]byte, error) {
+func (s *Crypt) DecryptBlock(key [lioness.KeyLen]byte, data []byte) ([]byte, error) {
 	cipher := lioness.NewCipher(key, s.blockSize)
 	ciphertext, err := cipher.Decrypt(data)
 	if err != nil {
@@ -141,40 +145,39 @@ func (s *Crypt) Hash(data []byte) [32]byte {
 	return blake2b.Sum256(data)
 }
 
-func (s *Crypt) HashBlindingFactor(alpha []byte, secret [secretKeyLen]byte) [32]byte {
+func (s *Crypt) HashBlindingFactor(alpha []byte, secret [32]byte) [32]byte {
 	h := make([]byte, 41)
-	h = append(secret[0:secretKeyLen], hashBlindSuffix)
+	h = append(h, hashBlindPrefix)
 	h = append(h, alpha...)
-	return s.Hash(h[0:32])
+	h = append(h, secret)
+	return s.Hash(h)
 }
 
-func (s *Crypt) HashRho(secret [secretKeyLen]byte) [32]byte {
-	h := make([]byte, 41)
-	h = append(secret[0:secretKeyLen], hashRhoSuffix)
-	return s.Hash(h[0:32])
+// HashMu is used to hash the secret with a suffix for use with HMAC
+func (s *Crypt) HashMu(secret [32]byte) [32]byte {
+	h := make([]byte, 32)
+	h = append(h, hashMuPrefix)
+	h = append(h, secret)
+	return s.Hash(h)
 }
 
-func (s *Crypt) HashMu(secret [secretKeyLen]byte) [32]byte {
-	h := make([]byte, 41)
-	h = append(secret[0:secretKeyLen], hashMuSuffix)
-	return s.Hash(h[0:32])
-}
-
-// CreateBlockCipherKey creates our LIONESS block cipher key given a 40 byte secret
-func (s *Crypt) CreateBlockCipherKey(secret [secretKeyLen]byte) ([lioness.LionessKeyLen]byte, error) {
-	var ret [lioness.LionessKeyLen]byte
-	chacha, err := chacha20.NewCipher(secret[:chachaKeyLen], secret[chachaKeyLen:chachaKeyLen+chachaNonceLen])
+// CreateBlockCipherKey creates the LIONESS block cipher
+func (s *Crypt) CreateBlockCipherKey(secret [32]byte) ([lioness.KeyLen]byte, error) {
+	var ret [lioness.KeyLen]byte
+	var nonce [8]byte // zero nonce is OK since the key is used only once
+	chacha, err := chacha20.NewCipher(secret, nonce)
 	if err != nil {
 		return ret, err
 	}
-	r := bytes.Repeat([]byte{0}, lioness.LionessKeyLen)
+	r := bytes.Repeat([]byte{0}, lioness.KeyLen)
 	chacha.XORKeyStream(r, r)
 	copy(ret[:], r)
 	return ret, nil
 }
 
-func (s *Crypt) HashTau(secret [secretKeyLen]byte) [32]byte {
+func (s *Crypt) HashTau(secret [32]byte) [32]byte {
 	h := make([]byte, 41)
-	h = append(secret[0:secretKeyLen], hashTauSuffix)
+	h = append(h, hashTauPrefix)
+	h = append(h, secret)
 	return s.Hash(h[0:32])
 }
