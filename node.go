@@ -4,14 +4,33 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
+	"fmt"
 	mathrand "math/rand"
+	"sync"
 
 	"github.com/david415/go-lioness"
+)
+
+type UnwrappedType int
+
+const (
+	ExitNode = iota
+	MoreHops
+	ClientHop
+	Failure
 )
 
 type Packet struct {
 	Alpha, Gamma [32]byte
 	Beta, Delta  []byte
+}
+
+type UnwrappedMessage struct {
+	Alpha, Beta, Gamma, Delta []byte
+	NextHop                   []byte
+	ClientID                  []byte
+	MessageID                 []byte
 }
 
 type Options struct {
@@ -20,7 +39,20 @@ type Options struct {
 	id         [16]byte
 }
 
+func AddPadding(src []byte, blockSize int) []byte {
+	padding := blockSize - len(src)%blockSize
+	padtext := bytes.Repeat([]byte{byte(padding)}, padding)
+	return append(src, padtext...)
+}
+
+func RemovePadding(src []byte) []byte {
+	length := len(src)
+	unpadding := int(src[length-1])
+	return src[:(length - unpadding)]
+}
+
 type Node struct {
+	sync.RWMutex
 	pki         SphinxPKI
 	nymServer   SphinxNymServer
 	group       *GroupCurve25519
@@ -70,62 +102,99 @@ func (n *Node) idEncode(idnum uint32) [16]byte {
 
 // Decode the prefix-free encoding.
 // Return the type, value, and the remainder of the input string
-/*func (n *Node) PrefixFreeDecode() (uint8, []byte, []byte) {
+func (n *Node) PrefixFreeDecode(s []byte) (int, []byte, []byte) {
+	if len(s) == 0 {
+		return Failure, nil, nil
+	}
+	if int(s[0]) == 0 {
+		return ExitNode, nil, s[1:]
+	}
+	if int(s[0]) == 255 {
+		return MoreHops, s[:securityParameter], s[securityParameter:]
+	}
+	if int(s[0]) < 128 {
+		return ClientHop, s[1 : int(s[0])+1], s[int(s[0])+1:]
+	}
+	return Failure, nil, nil
+}
 
-}*/
-
-func (n *Node) Process(packet Packet) {
+func (n *Node) Unwrap(packet Packet) (*UnwrappedMessage, error) {
+	result := &UnwrappedMessage{}
 	sharedSecret := n.group.ExpOn(packet.Alpha, n.privateKey)
+
 	// Have we seen it already?
-	tag := n.crypt.HashTau(sharedSecret)
+	n.RLock()
+	tag := n.crypt.HashSeen(sharedSecret)
 	_, ok := n.seenSecrets[tag]
 	if ok {
-		// we've already seen that shared-secret
-		return
+		n.RUnlock()
+		return nil, errors.New("Replay-attack detected. Shared-secret already seen.")
 	}
-	if packet.Gamma != n.crypt.HMAC(n.crypt.HashMu(sharedSecret), packet.Beta) {
+	n.RUnlock()
+
+	if packet.Gamma != n.crypt.HMAC(n.crypt.HashHMAC(sharedSecret), packet.Beta) {
 		// invalid MAC
-		return
+		return nil, errors.New("Invalid MAC.")
 	}
-	seenSecrets[tag] = true
+
+	n.Lock()
+	_, ok = n.seenSecrets[tag]
+	if ok {
+		n.RUnlock()
+		return nil, errors.New("Replay-attack detected. Shared-secret already seen.")
+	}
+	n.seenSecrets[tag] = true
+	n.Unlock()
+
 	cipherStreamSize := len(packet.Beta) + (2 * securityParameter)
-	hrho, err := n.crypt.generateCipherStream(n.crypt.generateStreamCipherKey(sharedSecret, cipherStreamSize))
+	hrho, err := n.crypt.generateCipherStream(n.crypt.generateStreamCipherKey(sharedSecret), uint(cipherStreamSize))
 	if err != nil {
 		// stream cipher failure
-		return
+		return nil, fmt.Errorf("Stream cipher failure: %s", err)
 	}
+
+	deltaKey, err := n.crypt.CreateBlockCipherKey(sharedSecret)
+	delta, err := n.crypt.DecryptBlock(deltaKey, packet.Delta)
+	if err != nil {
+		return nil, fmt.Errorf("wide block cipher decryption failure: %s", err)
+	}
+
 	padding := make([]byte, 2*securityParameter)
-	B := lioness.XorBytes(append(packet.beta, padding), hrho)
-	messageType, val, rest := n.PrefixFreeDecode()
-	if messageType == NodeType {
-		b := n.crypt.HashBlindingFactor(packet.Alpha, sharedSecret)
-		alpha := n.group.ExpOn(alpha, b)
+	B := []byte{}
+	lioness.XorBytes(B, append(packet.Beta, padding...), hrho)
+	messageType, val, rest := n.PrefixFreeDecode(B)
+
+	if messageType == MoreHops {
+		b := n.crypt.HashBlindingFactor(packet.Alpha[:], sharedSecret)
+		alpha := n.group.ExpOn(packet.Alpha, b)
 		gamma := B[securityParameter : securityParameter*2]
 		beta := B[securityParameter*2:]
-		deltaKey, err := CreateBlockCipherKey(sharedSecret, delta)
-		delta := n.crypt.DecryptBlock(deltaKey)
 		// send to next node in the route
-		return
-	} else if messageType == DspecType {
-		deltaKey, err := CreateBlockCipherKey(sharedSecret, delta)
-		delta := n.crypt.DecryptBlock(deltaKey)
+		result.Alpha = alpha[:]
+		result.Beta = beta
+		result.Gamma = gamma
+		result.Delta = delta
+		result.NextHop = val
+		return result, nil
+	} else if messageType == ExitNode { // process
 		zeros := bytes.Repeat([]byte{0}, securityParameter)
 		if bytes.Equal(delta[:securityParameter], zeros) {
 			innerType, val, rest := n.PrefixFreeDecode(delta[securityParameter:])
-			if innerType == DestType {
-				body := unpadBody(rest)
+			if innerType == ClientHop {
+				body := RemovePadding(rest)
 				// deliver body to val
-				return
+				result.Delta = body
+				result.ClientID = val
+				return result, nil
 			}
 		}
-	} else if messageType == DestType {
-		id := rest[:securityParameter]
-		deltaKey, err := CreateBlockCipherKey(sharedSecret)
-		delta := n.crypt.DecryptBlock(deltaKey, packet.delta)
-		// XXX ...
-		return
-	} else {
-		// invalid message type
-		return
+		return nil, errors.New("Invalid message special destination.")
+	} else if messageType == ClientHop { // client
+		message_id := rest[:securityParameter]
+		result.ClientID = val
+		result.MessageID = message_id
+		result.Delta = delta
+		return result, nil
 	}
+	return nil, errors.New("Invalid message type.")
 }
