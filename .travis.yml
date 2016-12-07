@@ -1,0 +1,17 @@
+
+language: go
+
+go:
+  - tip
+  - 1.7
+  - 1.6
+  - 1.5
+
+before_install:
+ - go get github.com/mattn/goveralls
+install:
+ - go get -v -t ./
+
+script:
+ - go test -v ./
+ - $HOME/gopath/bin/goveralls
