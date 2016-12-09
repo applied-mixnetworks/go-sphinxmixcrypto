@@ -11,12 +11,6 @@ import (
 )
 
 const (
-	// The number of bytes produced by our CSPRG for the key stream
-	// implementing our stream cipher to encrypt/decrypt the mix header. The
-	// last 2 * securityParameter bytes are only used in order to generate/check
-	// the MAC over the header.
-	numStreamBytes = (2*NumMaxHops + 3) * securityParameter
-
 	// Size in bytes of the shared secrets.
 	sharedSecretSize = 32
 
@@ -88,18 +82,14 @@ func (g *GroupCurve25519) MakeExp(data [32]byte) [32]byte {
 }
 
 type Params struct {
-	maxHops   int
-	blockSize int
-	group     *GroupCurve25519
+	group *GroupCurve25519
 }
 
 // NewParams creates a new Params struct
 // with max mixnet nodes per route set to r
-func NewParams(maxHops, blockSize int) *Params {
+func NewParams() *Params {
 	s := Params{
-		maxHops:   maxHops,
-		blockSize: blockSize,
-		group:     NewGroupCurve25519(),
+		group: NewGroupCurve25519(),
 	}
 	return &s
 }
@@ -136,7 +126,7 @@ func (s *Params) HMAC(key [32]byte, data []byte) [32]byte {
 }
 
 func (s *Params) EncryptBlock(key [lioness.KeyLen]byte, data []byte) ([]byte, error) {
-	cipher, err := lioness.NewCipher(key, s.blockSize)
+	cipher, err := lioness.NewCipher(key, PayloadSize)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +138,7 @@ func (s *Params) EncryptBlock(key [lioness.KeyLen]byte, data []byte) ([]byte, er
 }
 
 func (s *Params) DecryptBlock(key [lioness.KeyLen]byte, data []byte) ([]byte, error) {
-	cipher, err := lioness.NewCipher(key, s.blockSize)
+	cipher, err := lioness.NewCipher(key, PayloadSize)
 	if err != nil {
 		return nil, err
 	}

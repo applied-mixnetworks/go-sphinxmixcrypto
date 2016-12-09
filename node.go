@@ -40,18 +40,6 @@ type Options struct {
 	id         [16]byte
 }
 
-func AddPadding(src []byte, blockSize int) []byte {
-	padding := blockSize - len(src)%blockSize
-	padtext := bytes.Repeat([]byte{byte(padding)}, padding)
-	return append(src, padtext...)
-}
-
-func RemovePadding(src []byte) []byte {
-	length := len(src)
-	unpadding := int(src[length-1])
-	return src[:(length - unpadding)]
-}
-
 type SphinxNode struct {
 	sync.RWMutex
 	params      *Params
@@ -192,6 +180,7 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 		result.Gamma = gamma
 		result.Delta = delta
 		result.NextHop = val
+		result.ProcessAction = MoreHops
 		return result, nil
 	} else if messageType == ExitNode { // process
 		fmt.Println("EXIT PROCESS")
@@ -199,10 +188,14 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 		if bytes.Equal(delta[:securityParameter], zeros) {
 			innerType, val, rest := n.PrefixFreeDecode(delta[securityParameter:])
 			if innerType == ClientHop {
-				body := RemovePadding(rest)
+				body, err := RemovePadding(rest)
+				if err != nil {
+					return nil, err
+				}
 				// deliver body to val
 				result.Delta = body
 				result.ClientID = val
+				result.ProcessAction = ExitNode
 				return result, nil
 			}
 		}
@@ -213,6 +206,7 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 		result.ClientID = val
 		result.MessageID = message_id
 		result.Delta = delta
+		result.ProcessAction = ClientHop
 		return result, nil
 	}
 	return nil, errors.New("Invalid message type.")

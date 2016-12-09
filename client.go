@@ -10,6 +10,12 @@ import (
 )
 
 const (
+	// The number of bytes produced by our CSPRG for the key stream
+	// implementing our stream cipher to encrypt/decrypt the mix header. The
+	// last 2 * securityParameter bytes are only used in order to generate/check
+	// the MAC over the header.
+	numStreamBytes = (2*NumMaxHops + 3) * securityParameter
+
 	// The maximum path length.
 	NumMaxHops = 10
 
@@ -22,7 +28,7 @@ const (
 	routingInfoSize = pubKeyLen + (2*NumMaxHops+2)*securityParameter
 
 	// Per-hop payload size
-	HopPayloadSize = 16
+	HopPayloadSize = 32
 	PayloadSize    = 1024
 )
 
@@ -37,10 +43,12 @@ type MixHeader struct {
 // routing information required to propagate the message through the mixnet.
 func NewMixHeader(params *Params, route [][16]byte, node_map map[[16]byte][32]byte, destination_type byte,
 	destination_id [16]byte) (*MixHeader, [][32]byte, error) {
+
+	fmt.Print("NewMixHeader")
 	route_len := len(route)
 
-	if route_len > params.maxHops {
-		return nil, nil, fmt.Errorf("route length %d exceeds max hops %d", route_len, params.maxHops)
+	if route_len > NumMaxHops {
+		return nil, nil, fmt.Errorf("route length %d exceeds max hops %d", route_len, NumMaxHops)
 	}
 	secret, err := params.group.GenerateSecret(rand.Reader)
 	if err != nil {
@@ -62,23 +70,23 @@ func NewMixHeader(params *Params, route [][16]byte, node_map map[[16]byte][32]by
 	hopSize := 2 * securityParameter
 	filler := make([]byte, (numHops-1)*hopSize)
 	for i := 1; i < numHops; i++ {
-		totalFillerSize := ((NumMaxHops - i) + 3) * hopSize // XXX
+		min := (2*(NumMaxHops-i) + 3) * securityParameter
 		streamBytes, err := params.GenerateCipherStream(params.GenerateStreamCipherKey(hopSharedSecrets[i-1]), numStreamBytes)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to compute filler strings: %s", err)
 		}
-		lioness.XorBytes(filler, filler, streamBytes[totalFillerSize:totalFillerSize+i*hopSize])
+		lioness.XorBytes(filler, filler, streamBytes[min:])
 	}
 
 	// compute beta and then gamma
-	slice_length := (2*(params.maxHops-route_len)+2)*securityParameter - 1 // minus 1 for one byte destination type marker
+	slice_length := (2*(NumMaxHops-route_len)+2)*securityParameter - 1 // minus 1 for one byte destination type marker
 	beta := make([]byte, slice_length)
 	beta[0] = destination_type
 	_, err = rand.Read(beta[1:])
 	if err != nil {
 		return nil, nil, fmt.Errorf("failure to read pseudo random data: %s", err)
 	}
-	beta_length := uint((2*(params.maxHops-route_len) + 3) * securityParameter)
+	beta_length := uint((2*(NumMaxHops-route_len) + 3) * securityParameter)
 	rhoKey := params.GenerateStreamCipherKey(hopSharedSecrets[route_len-1])
 	rho_cipher, err := params.GenerateCipherStream(rhoKey, beta_length)
 	if err != nil {
@@ -96,14 +104,17 @@ func NewMixHeader(params *Params, route [][16]byte, node_map map[[16]byte][32]by
 		}
 		beta = append(beta, mix_id[:]...)
 		beta = append(beta, gamma[:]...)
-		beta = append(beta, beta[:(2*params.maxHops+1)*securityParameter]...)
+
 		rhoKey := params.GenerateStreamCipherKey(hopSharedSecrets[i])
-		beta_length := uint((2*params.maxHops + 1) * securityParameter)
+		beta_length := uint((2*NumMaxHops + 1) * securityParameter)
+		//beta = append(beta, beta[:(2*NumMaxHops+1)*securityParameter]...)
 		rho_cipher, err := params.GenerateCipherStream(rhoKey, beta_length)
 		if err != nil {
 			return nil, nil, fmt.Errorf("stream cipher failure: %s", err)
 		}
 		lioness.XorBytes(beta, beta, rho_cipher)
+		fmt.Printf("beta len %d end slice %d\n", len(beta), (2*NumMaxHops+1)*securityParameter)
+
 		gamma = params.HMAC(params.GenerateHMACKey(hopSharedSecrets[i]), beta)
 	}
 
@@ -132,6 +143,14 @@ type OnionPacket struct {
 func NewOnionPacket(params *Params, route [][16]byte, node_map map[[16]byte][32]byte,
 	destination [16]byte, payload []byte) (*OnionPacket, error) {
 
+	if len(payload) > PayloadSize-4 { // XXX correcto?
+		return nil, fmt.Errorf("wrong sized payload %d > %d", len(payload), PayloadSize)
+	}
+	paddedPayload, err := AddPadding(payload, PayloadSize)
+	if err != nil {
+		return nil, err
+	}
+
 	// Compute the mix header, and shared secerts for each hop.
 	destination_type := byte(ExitNode)
 	var destination_id [16]byte
@@ -141,7 +160,31 @@ func NewOnionPacket(params *Params, route [][16]byte, node_map map[[16]byte][32]
 		return nil, err
 	}
 
-	return &OnionPacket{Header: mixHeader}, nil
+	// compute the delta values
+	blockCipherKey, err := params.CreateBlockCipherKey(hopSharedSecrets[len(route)-1])
+	if err != nil {
+		return nil, err
+	}
+	delta, err := params.EncryptBlock(blockCipherKey, paddedPayload)
+	if err != nil {
+		return nil, err
+	}
+	for i := len(route) - 2; i > -1; i-- {
+		blockCipherKey, err := params.CreateBlockCipherKey(hopSharedSecrets[len(route)-1])
+		if err != nil {
+			return nil, err
+		}
+		delta, err = params.EncryptBlock(blockCipherKey, delta)
+		if err != nil {
+			return nil, err
+		}
+	}
+	newPayload := [PayloadSize]byte{}
+	copy(newPayload[:], delta)
+	return &OnionPacket{
+		Header:  mixHeader,
+		Payload: newPayload,
+	}, nil
 }
 
 // Encode serializes the raw bytes of the onoin packet into the passed
