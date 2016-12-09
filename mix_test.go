@@ -18,6 +18,7 @@ func newTestRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
 		}
 		nodes[i] = node
 		nodeKeys[node.id] = node.publicKey
+		//fmt.Printf("node id %x\n", node.id)
 	}
 
 	// Gather all the pub keys in the path.
@@ -30,7 +31,7 @@ func newTestRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
 	// generated intermdiates nodes above.
 	params := NewParams()
 	var destination_id [16]byte
-	copy(destination_id[:], bytes.Repeat([]byte{0}, 16))
+	copy(destination_id[:], bytes.Repeat([]byte{0}, 16)) // XXX
 	message := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9}
 	fwdMsg, err := NewOnionPacket(params, route, nodeKeys, destination_id, message)
 	if err != nil {

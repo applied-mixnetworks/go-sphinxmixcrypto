@@ -17,7 +17,7 @@ const (
 	numStreamBytes = (2*NumMaxHops + 3) * securityParameter
 
 	// The maximum path length.
-	NumMaxHops = 10
+	NumMaxHops = 5
 
 	// Fixed size of the the routing info. This consists of a 16
 	// byte address and a 16 byte HMAC for each hop of the route,
@@ -44,9 +44,7 @@ type MixHeader struct {
 func NewMixHeader(params *Params, route [][16]byte, node_map map[[16]byte][32]byte, destination_type byte,
 	destination_id [16]byte) (*MixHeader, [][32]byte, error) {
 
-	fmt.Print("NewMixHeader")
 	route_len := len(route)
-
 	if route_len > NumMaxHops {
 		return nil, nil, fmt.Errorf("route length %d exceeds max hops %d", route_len, NumMaxHops)
 	}
@@ -82,10 +80,12 @@ func NewMixHeader(params *Params, route [][16]byte, node_map map[[16]byte][32]by
 	slice_length := (2*(NumMaxHops-route_len)+2)*securityParameter - 1 // minus 1 for one byte destination type marker
 	beta := make([]byte, slice_length)
 	beta[0] = destination_type
-	_, err = rand.Read(beta[1:])
+	beta = append(beta[1:], destination_id[:]...)
+	_, err = rand.Read(beta[1+len(destination_id):])
 	if err != nil {
 		return nil, nil, fmt.Errorf("failure to read pseudo random data: %s", err)
 	}
+
 	beta_length := uint((2*(NumMaxHops-route_len) + 3) * securityParameter)
 	rhoKey := params.GenerateStreamCipherKey(hopSharedSecrets[route_len-1])
 	rho_cipher, err := params.GenerateCipherStream(rhoKey, beta_length)
@@ -96,7 +96,6 @@ func NewMixHeader(params *Params, route [][16]byte, node_map map[[16]byte][32]by
 	beta = append(beta, filler...)
 	gamma_key := params.GenerateHMACKey(hopSharedSecrets[route_len-1])
 	gamma := params.HMAC(gamma_key, beta)
-	beta = []byte{}
 	for i := route_len - 2; i >= 0; i-- {
 		mix_id := route[i+1]
 		if len(mix_id) != securityParameter {
@@ -104,17 +103,14 @@ func NewMixHeader(params *Params, route [][16]byte, node_map map[[16]byte][32]by
 		}
 		beta = append(beta, mix_id[:]...)
 		beta = append(beta, gamma[:]...)
-
 		rhoKey := params.GenerateStreamCipherKey(hopSharedSecrets[i])
 		beta_length := uint((2*NumMaxHops + 1) * securityParameter)
-		//beta = append(beta, beta[:(2*NumMaxHops+1)*securityParameter]...)
+		beta = append(beta, beta[:beta_length]...)
 		rho_cipher, err := params.GenerateCipherStream(rhoKey, beta_length)
 		if err != nil {
 			return nil, nil, fmt.Errorf("stream cipher failure: %s", err)
 		}
 		lioness.XorBytes(beta, beta, rho_cipher)
-		fmt.Printf("beta len %d end slice %d\n", len(beta), (2*NumMaxHops+1)*securityParameter)
-
 		gamma = params.HMAC(params.GenerateHMACKey(hopSharedSecrets[i]), beta)
 	}
 
@@ -143,10 +139,14 @@ type OnionPacket struct {
 func NewOnionPacket(params *Params, route [][16]byte, node_map map[[16]byte][32]byte,
 	destination [16]byte, payload []byte) (*OnionPacket, error) {
 
-	if len(payload) > PayloadSize-4 { // XXX correcto?
+	if len(payload)+1+len(destination) > PayloadSize {
 		return nil, fmt.Errorf("wrong sized payload %d > %d", len(payload), PayloadSize)
 	}
-	paddedPayload, err := AddPadding(payload, PayloadSize)
+	addrPayload := []byte{}
+	addrPayload = append(addrPayload, bytes.Repeat([]byte{0}, 16)...)
+	addrPayload = append(addrPayload, destination[:]...)
+	addrPayload = append(addrPayload, payload[:]...)
+	paddedPayload, err := AddPadding(addrPayload, PayloadSize)
 	if err != nil {
 		return nil, err
 	}

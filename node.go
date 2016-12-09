@@ -112,6 +112,7 @@ func (n *SphinxNode) PrefixFreeDecode(s []byte) (int, []byte, []byte) {
 // Unwrap unwraps a layer of encryption from a sphinx packet
 // and upon success returns an UnwrappedMessage, otherwise an error.
 func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
+	fmt.Println("UNWRAP")
 	result := &UnwrappedMessage{}
 
 	mixHeader := packet.Header
@@ -197,7 +198,11 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 				result.ClientID = val
 				result.ProcessAction = ExitNode
 				return result, nil
+			} else {
+				fmt.Println("meow1")
 			}
+		} else {
+			fmt.Printf("meow2 %x\n", delta[:securityParameter])
 		}
 		return nil, errors.New("Invalid message special destination.")
 	} else if messageType == ClientHop { // client
@@ -209,5 +214,5 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 		result.ProcessAction = ClientHop
 		return result, nil
 	}
-	return nil, errors.New("Invalid message type.")
+	return nil, fmt.Errorf("Invalid message type %d", messageType)
 }
