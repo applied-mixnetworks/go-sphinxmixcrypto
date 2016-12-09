@@ -136,7 +136,10 @@ func (s *Params) HMAC(key [32]byte, data []byte) [32]byte {
 }
 
 func (s *Params) EncryptBlock(key [lioness.KeyLen]byte, data []byte) ([]byte, error) {
-	cipher := lioness.NewCipher(key, s.blockSize)
+	cipher, err := lioness.NewCipher(key, s.blockSize)
+	if err != nil {
+		return nil, err
+	}
 	ciphertext, err := cipher.Encrypt(data)
 	if err != nil {
 		return nil, err
@@ -145,7 +148,10 @@ func (s *Params) EncryptBlock(key [lioness.KeyLen]byte, data []byte) ([]byte, er
 }
 
 func (s *Params) DecryptBlock(key [lioness.KeyLen]byte, data []byte) ([]byte, error) {
-	cipher := lioness.NewCipher(key, s.blockSize)
+	cipher, err := lioness.NewCipher(key, s.blockSize)
+	if err != nil {
+		return nil, err
+	}
 	ciphertext, err := cipher.Decrypt(data)
 	if err != nil {
 		return nil, err
