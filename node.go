@@ -1,4 +1,4 @@
-package sphinxnetcrypto
+package sphinxmixcrypto
 
 import (
 	"bytes"
@@ -27,6 +27,7 @@ type Packet struct {
 }
 
 type UnwrappedMessage struct {
+	ProcessAction             int
 	Alpha, Beta, Gamma, Delta []byte
 	NextHop                   []byte
 	ClientID                  []byte
@@ -51,22 +52,24 @@ func RemovePadding(src []byte) []byte {
 	return src[:(length - unpadding)]
 }
 
-type Node struct {
+type SphinxNode struct {
 	sync.RWMutex
+	params      *Params
 	pki         SphinxPKI
 	nymServer   SphinxNymServer
 	group       *GroupCurve25519
-	crypt       *Crypt
+	crypt       *Params
 	privateKey  [32]byte
 	publicKey   [32]byte
 	id          [16]byte
 	seenSecrets map[[32]byte]bool
 }
 
-func NewNode(crypt *Crypt, options *Options) (*Node, error) {
-	n := Node{
-		crypt: crypt,
-		group: NewGroupCurve25519(),
+func NewSphinxNode(params *Params, options *Options) (*SphinxNode, error) {
+	n := SphinxNode{
+		params:      params,
+		group:       NewGroupCurve25519(),
+		seenSecrets: make(map[[32]byte]bool),
 	}
 	if options == nil {
 		var err error
@@ -86,7 +89,7 @@ func NewNode(crypt *Crypt, options *Options) (*Node, error) {
 }
 
 // idEncode transforms a uint32 into a 16 byte ID
-func (n *Node) idEncode(idnum uint32) [16]byte {
+func (n *SphinxNode) idEncode(idnum uint32) [16]byte {
 	count := 16 - 4 - 1 // 4 is len of uint32
 	zeros := bytes.Repeat([]byte{0}, count)
 	bs := make([]byte, 4)
@@ -102,7 +105,7 @@ func (n *Node) idEncode(idnum uint32) [16]byte {
 
 // Decode the prefix-free encoding.
 // Return the type, value, and the remainder of the input string
-func (n *Node) PrefixFreeDecode(s []byte) (int, []byte, []byte) {
+func (n *SphinxNode) PrefixFreeDecode(s []byte) (int, []byte, []byte) {
 	if len(s) == 0 {
 		return Failure, nil, nil
 	}
@@ -118,13 +121,21 @@ func (n *Node) PrefixFreeDecode(s []byte) (int, []byte, []byte) {
 	return Failure, nil, nil
 }
 
-func (n *Node) Unwrap(packet Packet) (*UnwrappedMessage, error) {
+// Unwrap unwraps a layer of encryption from a sphinx packet
+// and upon success returns an UnwrappedMessage, otherwise an error.
+func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 	result := &UnwrappedMessage{}
-	sharedSecret := n.group.ExpOn(packet.Alpha, n.privateKey)
+
+	mixHeader := packet.Header
+	dhKey := mixHeader.EphemeralKey
+	sharedSecret := n.group.ExpOn(dhKey, n.privateKey)
+	routeInfo := mixHeader.RoutingInfo
+	headerMac := mixHeader.HeaderMAC
+	payload := packet.Payload
 
 	// Have we seen it already?
 	n.RLock()
-	tag := n.crypt.HashSeen(sharedSecret)
+	tag := n.params.HashSeen(sharedSecret)
 	_, ok := n.seenSecrets[tag]
 	if ok {
 		n.RUnlock()
@@ -132,7 +143,8 @@ func (n *Node) Unwrap(packet Packet) (*UnwrappedMessage, error) {
 	}
 	n.RUnlock()
 
-	if packet.Gamma != n.crypt.HMAC(n.crypt.HashHMAC(sharedSecret), packet.Beta) {
+	mac := n.params.HMAC(n.params.GenerateHMACKey(sharedSecret), routeInfo[:])
+	if bytes.Equal(headerMac[:], mac[:]) {
 		// invalid MAC
 		return nil, errors.New("Invalid MAC.")
 	}
@@ -146,27 +158,32 @@ func (n *Node) Unwrap(packet Packet) (*UnwrappedMessage, error) {
 	n.seenSecrets[tag] = true
 	n.Unlock()
 
-	cipherStreamSize := len(packet.Beta) + (2 * securityParameter)
-	hrho, err := n.crypt.generateCipherStream(n.crypt.generateStreamCipherKey(sharedSecret), uint(cipherStreamSize))
+	cipherStreamSize := len(routeInfo) + (2 * securityParameter)
+	hrho, err := n.params.GenerateCipherStream(n.params.GenerateStreamCipherKey(sharedSecret), uint(cipherStreamSize))
 	if err != nil {
 		// stream cipher failure
 		return nil, fmt.Errorf("Stream cipher failure: %s", err)
 	}
 
-	deltaKey, err := n.crypt.CreateBlockCipherKey(sharedSecret)
-	delta, err := n.crypt.DecryptBlock(deltaKey, packet.Delta)
+	deltaKey, err := n.params.CreateBlockCipherKey(sharedSecret)
+	if err != nil {
+		return nil, fmt.Errorf("CreateBlockCipherKey failure: %s", err)
+	}
+	delta, err := n.params.DecryptBlock(deltaKey, payload[:])
 	if err != nil {
 		return nil, fmt.Errorf("wide block cipher decryption failure: %s", err)
 	}
 
 	padding := make([]byte, 2*securityParameter)
-	B := []byte{}
-	lioness.XorBytes(B, append(packet.Beta, padding...), hrho)
+	beta := append(routeInfo[:], padding...)
+	B := make([]byte, len(beta))
+	lioness.XorBytes(B, append(routeInfo[:], padding...), hrho)
 	messageType, val, rest := n.PrefixFreeDecode(B)
 
 	if messageType == MoreHops {
-		b := n.crypt.HashBlindingFactor(packet.Alpha[:], sharedSecret)
-		alpha := n.group.ExpOn(packet.Alpha, b)
+		fmt.Println("MORE HOPS")
+		b := n.params.HashBlindingFactor(dhKey[:], sharedSecret)
+		alpha := n.group.ExpOn(dhKey, b)
 		gamma := B[securityParameter : securityParameter*2]
 		beta := B[securityParameter*2:]
 		// send to next node in the route
@@ -177,6 +194,7 @@ func (n *Node) Unwrap(packet Packet) (*UnwrappedMessage, error) {
 		result.NextHop = val
 		return result, nil
 	} else if messageType == ExitNode { // process
+		fmt.Println("EXIT PROCESS")
 		zeros := bytes.Repeat([]byte{0}, securityParameter)
 		if bytes.Equal(delta[:securityParameter], zeros) {
 			innerType, val, rest := n.PrefixFreeDecode(delta[securityParameter:])
@@ -190,6 +208,7 @@ func (n *Node) Unwrap(packet Packet) (*UnwrappedMessage, error) {
 		}
 		return nil, errors.New("Invalid message special destination.")
 	} else if messageType == ClientHop { // client
+		fmt.Println("EXIT CLIENT")
 		message_id := rest[:securityParameter]
 		result.ClientID = val
 		result.MessageID = message_id

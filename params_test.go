@@ -1,4 +1,4 @@
-package sphinxnetcrypto
+package sphinxmixcrypto
 
 import (
 	"crypto/rand"

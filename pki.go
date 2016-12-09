@@ -1,4 +1,4 @@
-package sphinxnetcrypto
+package sphinxmixcrypto
 
 // SphinxPKI interface is used to query the mapping of node id to node
 type SphinxPKI interface {
