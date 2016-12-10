@@ -31,7 +31,9 @@ func newTestRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
 	// generated intermdiates nodes above.
 	params := NewParams()
 	var destination_id [16]byte
-	copy(destination_id[:], bytes.Repeat([]byte{0}, 16)) // XXX
+	destination := []byte("dest")
+	copy(destination_id[:], destination)
+	fmt.Printf("dest id %x %v\n\n", destination_id, destination_id)
 	message := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9}
 	fwdMsg, err := NewOnionPacket(params, route, nodeKeys, destination_id, message)
 	if err != nil {
@@ -85,6 +87,8 @@ func TestSphinxCorrectness(t *testing.T) {
 					hex.EncodeToString(nodes[i+1].id[:]),
 					hex.EncodeToString(parsedNextHop))
 			}
+
+			fmt.Printf("parsedNextHop %x\n", parsedNextHop)
 
 			header := MixHeader{
 				Version: byte(0),

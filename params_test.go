@@ -2,7 +2,6 @@ package sphinxmixcrypto
 
 import (
 	"crypto/rand"
-	"fmt"
 	"testing"
 )
 
@@ -14,7 +13,5 @@ func TestGroupCurve25519(t *testing.T) {
 		t.Fail()
 	}
 	blinds := [][32]byte{x}
-	fmt.Printf("blinds == %d\n", blinds)
-	alpha := group.MultiExpOn(group.g, blinds)
-	fmt.Printf("alpha == %d\n", alpha)
+	_ = group.MultiExpOn(group.g, blinds)
 }

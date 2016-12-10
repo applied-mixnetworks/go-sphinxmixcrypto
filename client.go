@@ -77,10 +77,10 @@ func NewMixHeader(params *Params, route [][16]byte, node_map map[[16]byte][32]by
 	}
 
 	// compute beta and then gamma
-	slice_length := (2*(NumMaxHops-route_len)+2)*securityParameter - 1 // minus 1 for one byte destination type marker
-	beta := make([]byte, slice_length)
+	rand_slice_length := (2*(NumMaxHops-route_len)+2)*securityParameter - 1 // minus 1 for one byte destination type marker
+	beta := make([]byte, rand_slice_length+len(destination_id)+1)
 	beta[0] = destination_type
-	beta = append(beta[1:], destination_id[:]...)
+	copy(beta[1:], destination_id[:])
 	_, err = rand.Read(beta[1+len(destination_id):])
 	if err != nil {
 		return nil, nil, fmt.Errorf("failure to read pseudo random data: %s", err)
@@ -94,34 +94,40 @@ func NewMixHeader(params *Params, route [][16]byte, node_map map[[16]byte][32]by
 	}
 	lioness.XorBytes(beta, beta, rho_cipher)
 	beta = append(beta, filler...)
+
+	// XXX - corrections make up to this point
 	gamma_key := params.GenerateHMACKey(hopSharedSecrets[route_len-1])
 	gamma := params.HMAC(gamma_key, beta)
+	new_beta := []byte{}
+	previous_beta := beta
 	for i := route_len - 2; i >= 0; i-- {
 		mix_id := route[i+1]
-		if len(mix_id) != securityParameter {
-			return nil, nil, fmt.Errorf("invalid length mix id: %x", mix_id)
-		}
-		beta = append(beta, mix_id[:]...)
-		beta = append(beta, gamma[:]...)
+		fmt.Printf("i %d mix id %x\n", i, mix_id)
+		new_beta = []byte{}
+		new_beta = append(new_beta, mix_id[:]...)
+		new_beta = append(new_beta, gamma[:]...)
+		beta_slice := uint((2*NumMaxHops - 1) * securityParameter)
+		new_beta = append(new_beta, previous_beta[:beta_slice]...)
+		fmt.Printf("\nnew_beta hex %x\n", new_beta)
 		rhoKey := params.GenerateStreamCipherKey(hopSharedSecrets[i])
-		beta_length := uint((2*NumMaxHops + 1) * securityParameter)
-		beta = append(beta, beta[:beta_length]...)
-		rho_cipher, err := params.GenerateCipherStream(rhoKey, beta_length)
+		stream_slice := uint((2*NumMaxHops + 1) * securityParameter)
+		rho_cipher, err := params.GenerateCipherStream(rhoKey, stream_slice)
 		if err != nil {
 			return nil, nil, fmt.Errorf("stream cipher failure: %s", err)
 		}
-		lioness.XorBytes(beta, beta, rho_cipher)
-		gamma = params.HMAC(params.GenerateHMACKey(hopSharedSecrets[i]), beta)
+		lioness.XorBytes(new_beta, new_beta, rho_cipher)
+		gamma = params.HMAC(params.GenerateHMACKey(hopSharedSecrets[i]), new_beta)
+		previous_beta = new_beta
 	}
 
-	new_beta := [routingInfoSize]byte{}
-	copy(new_beta[:], beta)
+	final_beta := [routingInfoSize]byte{}
+	copy(final_beta[:], new_beta)
 	new_gamma := [securityParameter]byte{}
 	copy(new_gamma[:], gamma[:])
 	header := &MixHeader{
 		Version:      0x01,
 		EphemeralKey: hopEphemeralPubKeys[0],
-		RoutingInfo:  new_beta,
+		RoutingInfo:  final_beta,
 		HeaderMAC:    new_gamma,
 	}
 	return header, hopSharedSecrets, nil
@@ -155,7 +161,7 @@ func NewOnionPacket(params *Params, route [][16]byte, node_map map[[16]byte][32]
 	destination_type := byte(ExitNode)
 	var destination_id [16]byte
 	copy(destination_id[:], bytes.Repeat([]byte{0}, 16))
-	mixHeader, hopSharedSecrets, err := NewMixHeader(params, route, node_map, destination_type, destination)
+	mixHeader, hopSharedSecrets, err := NewMixHeader(params, route, node_map, destination_type, destination_id)
 	if err != nil {
 		return nil, err
 	}

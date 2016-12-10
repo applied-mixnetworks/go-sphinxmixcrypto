@@ -15,9 +15,9 @@ import (
 type UnwrappedType int
 
 const (
-	ExitNode = iota
-	MoreHops
-	ClientHop
+	ExitNode  = 0
+	MoreHops  = 255
+	ClientHop = 128
 	Failure
 )
 
@@ -68,6 +68,7 @@ func NewSphinxNode(params *Params, options *Options) (*SphinxNode, error) {
 		n.publicKey = n.group.ExpOn(n.group.g, n.privateKey)
 		idnum := mathrand.Int31()
 		n.id = n.idEncode(uint32(idnum))
+		fmt.Printf("NODE ID %x\n", n.id)
 	} else {
 		n.privateKey = options.privateKey
 		n.publicKey = options.publicKey
@@ -94,6 +95,7 @@ func (n *SphinxNode) idEncode(idnum uint32) [16]byte {
 // Decode the prefix-free encoding.
 // Return the type, value, and the remainder of the input string
 func (n *SphinxNode) PrefixFreeDecode(s []byte) (int, []byte, []byte) {
+	fmt.Printf("PrefixFreeDecode %x\n", s)
 	if len(s) == 0 {
 		return Failure, nil, nil
 	}
@@ -106,6 +108,7 @@ func (n *SphinxNode) PrefixFreeDecode(s []byte) (int, []byte, []byte) {
 	if int(s[0]) < 128 {
 		return ClientHop, s[1 : int(s[0])+1], s[int(s[0])+1:]
 	}
+	fmt.Print("prefix free decoding FAILURE\n")
 	return Failure, nil, nil
 }
 
@@ -138,6 +141,7 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 		return nil, errors.New("Invalid MAC.")
 	}
 
+	// look again for replay attack just in case another goroutine added the tag
 	n.Lock()
 	_, ok = n.seenSecrets[tag]
 	if ok {
@@ -148,11 +152,14 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 	n.Unlock()
 
 	cipherStreamSize := len(routeInfo) + (2 * securityParameter)
-	hrho, err := n.params.GenerateCipherStream(n.params.GenerateStreamCipherKey(sharedSecret), uint(cipherStreamSize))
+	cipherStream, err := n.params.GenerateCipherStream(n.params.GenerateStreamCipherKey(sharedSecret), uint(cipherStreamSize))
 	if err != nil {
 		// stream cipher failure
 		return nil, fmt.Errorf("Stream cipher failure: %s", err)
 	}
+	B := make([]byte, cipherStreamSize)
+	padding := make([]byte, 2*securityParameter)
+	lioness.XorBytes(B, append(routeInfo[:], padding...), cipherStream)
 
 	deltaKey, err := n.params.CreateBlockCipherKey(sharedSecret)
 	if err != nil {
@@ -163,10 +170,6 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 		return nil, fmt.Errorf("wide block cipher decryption failure: %s", err)
 	}
 
-	padding := make([]byte, 2*securityParameter)
-	beta := append(routeInfo[:], padding...)
-	B := make([]byte, len(beta))
-	lioness.XorBytes(B, append(routeInfo[:], padding...), hrho)
 	messageType, val, rest := n.PrefixFreeDecode(B)
 
 	if messageType == MoreHops {
@@ -198,11 +201,7 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 				result.ClientID = val
 				result.ProcessAction = ExitNode
 				return result, nil
-			} else {
-				fmt.Println("meow1")
 			}
-		} else {
-			fmt.Printf("meow2 %x\n", delta[:securityParameter])
 		}
 		return nil, errors.New("Invalid message special destination.")
 	} else if messageType == ClientHop { // client
