@@ -15,18 +15,22 @@ import (
 )
 
 var (
+	// ErrReplayedPacket indicates a replay attack
 	ErrReplayedPacket = fmt.Errorf("sphinx packet replay attempted")
 )
 
-type UnwrappedType int
-
 const (
-	ExitNode  = 0
-	MoreHops  = 255
+	// ExitNode indicates an exit hop
+	ExitNode = 0
+	// MoreHops indicates another mix hop
+	MoreHops = 255
+	// ClientHop indicates a client hop
 	ClientHop = 128
+	// Failure indicates a prefix-free decoding failure
 	Failure
 )
 
+// UnwrappedMessage is produced by SphinxNode's Unwrap method
 type UnwrappedMessage struct {
 	ProcessAction             int
 	Alpha, Beta, Gamma, Delta []byte
@@ -35,12 +39,14 @@ type UnwrappedMessage struct {
 	MessageID                 []byte
 }
 
+// SphinxNodeOptions are node state options such as pub/priv key and an ID
 type SphinxNodeOptions struct {
 	privateKey [32]byte
 	publicKey  [32]byte
 	id         [16]byte
 }
 
+// SphinxNode is used to keep track of a mix node's state
 type SphinxNode struct {
 	sync.RWMutex
 	params      *Params
@@ -54,6 +60,7 @@ type SphinxNode struct {
 	seenSecrets map[[32]byte]bool
 }
 
+// NewSphinxNode creates a new SphinxNode
 func NewSphinxNode(params *Params, options *SphinxNodeOptions) (*SphinxNode, error) {
 	n := SphinxNode{
 		params:      params,
@@ -92,7 +99,7 @@ func (n *SphinxNode) idEncode(idnum uint32) [16]byte {
 	return ret
 }
 
-// Decode the prefix-free encoding.
+// PrefixFreeDecode decodes the prefix-free encoding.
 // Return the type, value, and the remainder of the input string
 func (n *SphinxNode) PrefixFreeDecode(s []byte) (int, []byte, []byte) {
 	if len(s) == 0 {
@@ -134,7 +141,7 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 	mac := n.params.HMAC(n.params.GenerateHMACKey(sharedSecret), routeInfo[:])
 	if !bytes.Equal(headerMac[:], mac[:]) {
 		// invalid MAC
-		return nil, errors.New("Invalid MAC.")
+		return nil, errors.New("invalid mac")
 	}
 
 	// look again for replay attack just in case another goroutine added the tag
@@ -142,7 +149,7 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 	_, ok = n.seenSecrets[tag]
 	if ok {
 		n.RUnlock()
-		return nil, errors.New("Replay-attack detected. Shared-secret already seen.")
+		return nil, errors.New("replay-attack detected")
 	}
 	n.seenSecrets[tag] = true
 	n.Unlock()
@@ -151,7 +158,7 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 	cipherStream, err := n.params.GenerateCipherStream(n.params.GenerateStreamCipherKey(sharedSecret), uint(cipherStreamSize))
 	if err != nil {
 		// stream cipher failure
-		return nil, fmt.Errorf("Stream cipher failure: %s", err)
+		return nil, fmt.Errorf("stream cipher failure: %s", err)
 	}
 	B := make([]byte, cipherStreamSize)
 	padding := make([]byte, 2*securityParameter)
@@ -159,7 +166,7 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 
 	deltaKey, err := n.params.CreateBlockCipherKey(sharedSecret)
 	if err != nil {
-		return nil, fmt.Errorf("CreateBlockCipherKey failure: %s", err)
+		return nil, fmt.Errorf("createBlockCipherKey failure: %s", err)
 	}
 	delta, err := n.params.DecryptBlock(deltaKey, payload[:])
 	if err != nil {
@@ -197,11 +204,11 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 				return result, nil
 			}
 		}
-		return nil, errors.New("Invalid message special destination.")
+		return nil, errors.New("invalid message special destination")
 	} else if messageType == ClientHop { // client
-		message_id := rest[:securityParameter]
+		messageID := rest[:securityParameter]
 		result.ClientID = val
-		result.MessageID = message_id
+		result.MessageID = messageID
 		result.Delta = delta
 		result.ProcessAction = ClientHop
 		return result, nil

@@ -19,7 +19,7 @@ const (
 	// the MAC over the header.
 	numStreamBytes = (2*NumMaxHops + 3) * securityParameter
 
-	// The maximum path length.
+	// NumMaxHops is the maximum path length.
 	NumMaxHops = 5
 
 	// Fixed size of the the routing info. This consists of a 16
@@ -30,11 +30,15 @@ const (
 	// obfuscated.
 	routingInfoSize = pubKeyLen + (2*NumMaxHops-1)*securityParameter
 
-	// Per-hop payload size
+	// HopPayloadSize is the per-hop payload size in the header
 	HopPayloadSize = 32
-	PayloadSize    = 1024
+	// PayloadSize is the packet payload size
+	PayloadSize = 1024
 )
 
+// MixHeader contains the sphinx header but not the payload.
+// A version number is also included; TODO: make the version
+// number do something useful.
 type MixHeader struct {
 	Version      byte
 	EphemeralKey [32]byte                // alpha
@@ -42,6 +46,8 @@ type MixHeader struct {
 	HeaderMAC    [securityParameter]byte // gamma
 }
 
+// EncodeDestination encodes a destination using our
+// prefix-free encoding
 func EncodeDestination(destination []byte) []byte {
 	if len(destination) > 127 || len(destination) == 0 {
 		panic("wtf")
@@ -55,11 +61,11 @@ func EncodeDestination(destination []byte) []byte {
 
 // NewMixHeader generates the a mix header containing the neccessary onion
 // routing information required to propagate the message through the mixnet.
-func NewMixHeader(params *Params, route [][16]byte, node_map map[[16]byte][32]byte,
-	destination_type byte, destination_id [16]byte, secret []byte, padding []byte) (*MixHeader, [][32]byte, error) {
-	route_len := len(route)
-	if route_len > NumMaxHops {
-		return nil, nil, fmt.Errorf("route length %d exceeds max hops %d", route_len, NumMaxHops)
+func NewMixHeader(params *Params, route [][16]byte, nodeMap map[[16]byte][32]byte,
+	destinationType byte, destinationID [16]byte, secret []byte, padding []byte) (*MixHeader, [][32]byte, error) {
+	routeLen := len(route)
+	if routeLen > NumMaxHops {
+		return nil, nil, fmt.Errorf("route length %d exceeds max hops %d", routeLen, NumMaxHops)
 	}
 	var secretPoint [32]byte
 	var err error
@@ -76,24 +82,24 @@ func NewMixHeader(params *Params, route [][16]byte, node_map map[[16]byte][32]by
 		copy(secretArray[:], secret)
 		secretPoint = params.group.makeSecret(secretArray)
 	}
-	rand_slice_length := (2*(NumMaxHops-route_len)+2)*securityParameter - 1
+	randSliceLen := (2*(NumMaxHops-routeLen)+2)*securityParameter - 1
 	if padding == nil {
 		// minus 1 for one byte destination type marker
-		randPadding := make([]byte, rand_slice_length)
+		randPadding := make([]byte, randSliceLen)
 		_, err = rand.Read(randPadding)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failure to read pseudo random data: %s", err)
 		}
 		copy(padding, randPadding)
 	}
-	numHops := route_len
+	numHops := routeLen
 	hopEphemeralPubKeys := make([][32]byte, numHops)
 	hopSharedSecrets := make([][32]byte, numHops)
 	var hopBlindingFactors [][32]byte
 	hopBlindingFactors = append(hopBlindingFactors, secretPoint)
-	for i := 0; i < route_len; i++ {
+	for i := 0; i < routeLen; i++ {
 		hopEphemeralPubKeys[i] = params.group.MultiExpOn(params.group.g, hopBlindingFactors)
-		hopSharedSecrets[i] = params.group.MultiExpOn(node_map[route[i]], hopBlindingFactors)
+		hopSharedSecrets[i] = params.group.MultiExpOn(nodeMap[route[i]], hopBlindingFactors)
 		b := params.HashBlindingFactor(hopEphemeralPubKeys[i][:], hopSharedSecrets[i])
 		hopBlindingFactors = append(hopBlindingFactors, b)
 	}
@@ -112,46 +118,46 @@ func NewMixHeader(params *Params, route [][16]byte, node_map map[[16]byte][32]by
 	}
 
 	// compute beta and then gamma
-	beta := make([]byte, rand_slice_length+len(destination_id)+1)
-	beta[0] = destination_type
-	copy(beta[1:], destination_id[:])
-	copy(beta[1+len(destination_id):], padding)
-	beta_length := uint((2*(NumMaxHops-route_len) + 3) * securityParameter)
-	rhoKey := params.GenerateStreamCipherKey(hopSharedSecrets[route_len-1])
-	rho_cipher, err := params.GenerateCipherStream(rhoKey, beta_length)
+	beta := make([]byte, randSliceLen+len(destinationID)+1)
+	beta[0] = destinationType
+	copy(beta[1:], destinationID[:])
+	copy(beta[1+len(destinationID):], padding)
+	betaLen := uint((2*(NumMaxHops-routeLen) + 3) * securityParameter)
+	rhoKey := params.GenerateStreamCipherKey(hopSharedSecrets[routeLen-1])
+	cipherStream, err := params.GenerateCipherStream(rhoKey, betaLen)
 	if err != nil {
 		return nil, nil, fmt.Errorf("stream cipher fail: %s", err)
 	}
-	lioness.XorBytes(beta, beta, rho_cipher)
+	lioness.XorBytes(beta, beta, cipherStream)
 	beta = append(beta, filler...)
-	gamma_key := params.GenerateHMACKey(hopSharedSecrets[route_len-1])
-	gamma := params.HMAC(gamma_key, beta)
-	new_beta := []byte{}
-	previous_beta := beta
+	gammaKey := params.GenerateHMACKey(hopSharedSecrets[routeLen-1])
+	gamma := params.HMAC(gammaKey, beta)
+	newBeta := []byte{}
+	prevBeta := beta
 
-	for i := route_len - 2; i >= 0; i-- {
-		mix_id := route[i+1]
-		new_beta = []byte{}
-		new_beta = append(new_beta, mix_id[:]...)
-		new_beta = append(new_beta, gamma[:]...)
-		beta_slice := uint((2*NumMaxHops - 1) * securityParameter)
-		new_beta = append(new_beta, previous_beta[:beta_slice]...)
+	for i := routeLen - 2; i >= 0; i-- {
+		mixID := route[i+1]
+		newBeta = []byte{}
+		newBeta = append(newBeta, mixID[:]...)
+		newBeta = append(newBeta, gamma[:]...)
+		betaSlice := uint((2*NumMaxHops - 1) * securityParameter)
+		newBeta = append(newBeta, prevBeta[:betaSlice]...)
 		rhoKey := params.GenerateStreamCipherKey(hopSharedSecrets[i])
-		stream_slice := uint((2*NumMaxHops + 1) * securityParameter)
-		rho_cipher, err := params.GenerateCipherStream(rhoKey, stream_slice)
+		streamSlice := uint((2*NumMaxHops + 1) * securityParameter)
+		cipherStream, err := params.GenerateCipherStream(rhoKey, streamSlice)
 		if err != nil {
 			return nil, nil, fmt.Errorf("stream cipher failure: %s", err)
 		}
-		lioness.XorBytes(new_beta, new_beta, rho_cipher)
-		gamma = params.HMAC(params.GenerateHMACKey(hopSharedSecrets[i]), new_beta)
-		previous_beta = new_beta
+		lioness.XorBytes(newBeta, newBeta, cipherStream)
+		gamma = params.HMAC(params.GenerateHMACKey(hopSharedSecrets[i]), newBeta)
+		prevBeta = newBeta
 	}
-	final_beta := [routingInfoSize]byte{}
-	copy(final_beta[:], new_beta[:])
+	finalBeta := [routingInfoSize]byte{}
+	copy(finalBeta[:], newBeta[:])
 	header := &MixHeader{
 		Version:      0x01,
 		EphemeralKey: hopEphemeralPubKeys[0],
-		RoutingInfo:  final_beta,
+		RoutingInfo:  finalBeta,
 		HeaderMAC:    gamma,
 	}
 	return header, hopSharedSecrets, nil
@@ -165,8 +171,8 @@ type OnionPacket struct {
 	Payload [PayloadSize]byte // delta
 }
 
-// NewOnionPaccket calls NewMixHeader to create the mixnet routing information
-func NewOnionPacket(params *Params, route [][16]byte, node_map map[[16]byte][32]byte,
+// NewOnionPacket creates a mixnet packet
+func NewOnionPacket(params *Params, route [][16]byte, nodeMap map[[16]byte][32]byte,
 	destination [16]byte, payload []byte, secret []byte, padding []byte) (*OnionPacket, error) {
 
 	if len(payload)+1+len(destination) > PayloadSize-8 { // XXX AddPadding has a 8 byte overhead
@@ -183,10 +189,10 @@ func NewOnionPacket(params *Params, route [][16]byte, node_map map[[16]byte][32]
 	}
 
 	// Compute the mix header, and shared secerts for each hop.
-	destination_type := byte(ExitNode)
-	var destination_id [16]byte
-	copy(destination_id[:], bytes.Repeat([]byte{0}, 16))
-	mixHeader, hopSharedSecrets, err := NewMixHeader(params, route, node_map, destination_type, destination_id, secret, padding)
+	destinationType := byte(ExitNode)
+	var destinationID [16]byte
+	copy(destinationID[:], bytes.Repeat([]byte{0}, 16))
+	mixHeader, hopSharedSecrets, err := NewMixHeader(params, route, nodeMap, destinationType, destinationID, secret, padding)
 	if err != nil {
 		return nil, err
 	}

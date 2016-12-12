@@ -27,10 +27,12 @@ const (
 	hashTauPrefix     = byte(0x55)
 )
 
+// GroupCurve25519 performs group operations on the curve
 type GroupCurve25519 struct {
 	g [32]byte
 }
 
+// NewGroupCurve25519 creates a new GroupCurve25519
 func NewGroupCurve25519() *GroupCurve25519 {
 	group := GroupCurve25519{}
 	group.g = group.basepoint()
@@ -55,6 +57,7 @@ func (g *GroupCurve25519) makeSecret(data [32]byte) [32]byte {
 	return curveOut
 }
 
+// GenerateSecret generats a new key
 func (g *GroupCurve25519) GenerateSecret(rand io.Reader) ([32]byte, error) {
 	var key [32]byte
 	_, err := io.ReadFull(rand, key[:32])
@@ -64,12 +67,15 @@ func (g *GroupCurve25519) GenerateSecret(rand io.Reader) ([32]byte, error) {
 	return g.makeSecret(key), nil
 }
 
+// ExpOn does scalar multiplication on the curve
 func (g *GroupCurve25519) ExpOn(base, exp [32]byte) [32]byte {
 	var dst [32]byte
 	curve25519.ScalarMult(&dst, &exp, &base)
 	return dst
 }
 
+// MultiExpOn does multiple scalar multiplication operations and
+// returns the accumulator
 func (g *GroupCurve25519) MultiExpOn(base [32]byte, exps [][32]byte) [32]byte {
 	acc := base
 	for i := 0; i < len(exps); i++ {
@@ -78,10 +84,12 @@ func (g *GroupCurve25519) MultiExpOn(base [32]byte, exps [][32]byte) [32]byte {
 	return acc
 }
 
+// MakeExp flips some bits
 func (g *GroupCurve25519) MakeExp(data [32]byte) [32]byte {
 	return g.makeSecret(data)
 }
 
+// Params handles the cryptographic operations
 type Params struct {
 	group *GroupCurve25519
 }
@@ -95,6 +103,7 @@ func NewParams() *Params {
 	return &s
 }
 
+// GenerateStreamCipherKey generates a stream cipher key
 func (s *Params) GenerateStreamCipherKey(secret [32]byte) [32]byte {
 	h := []byte{}
 	h = append(h, hashRhoPrefix)
@@ -103,6 +112,7 @@ func (s *Params) GenerateStreamCipherKey(secret [32]byte) [32]byte {
 	return blake2b.Sum256(h)
 }
 
+// GenerateCipherStream xor's the input data with a cipher stream
 func (s *Params) GenerateCipherStream(key [chachaKeyLen]byte, numBytes uint) ([]byte, error) {
 	var nonce [8]byte
 	chacha, err := chacha20.NewCipher(key[:chachaKeyLen], nonce[:])
@@ -124,6 +134,7 @@ func (s *Params) HMAC(key [16]byte, data []byte) [16]byte {
 	return ret
 }
 
+// EncryptBlock encrypts a block
 func (s *Params) EncryptBlock(key [lioness.KeyLen]byte, data []byte) ([]byte, error) {
 	cipher, err := lioness.NewCipher(key, PayloadSize)
 	if err != nil {
@@ -136,6 +147,7 @@ func (s *Params) EncryptBlock(key [lioness.KeyLen]byte, data []byte) ([]byte, er
 	return ciphertext, nil
 }
 
+// DecryptBlock decrypts a block
 func (s *Params) DecryptBlock(key [lioness.KeyLen]byte, data []byte) ([]byte, error) {
 	cipher, err := lioness.NewCipher(key, PayloadSize)
 	if err != nil {
@@ -148,6 +160,7 @@ func (s *Params) DecryptBlock(key [lioness.KeyLen]byte, data []byte) ([]byte, er
 	return ciphertext, nil
 }
 
+// Hash returns the hashed input
 func (s *Params) Hash(data []byte) [32]byte {
 	return blake2b.Sum256(data)
 }
@@ -162,7 +175,7 @@ func (s *Params) HashBlindingFactor(alpha []byte, secret [32]byte) [32]byte {
 	return s.group.MakeExp(s.Hash(h))
 }
 
-// HashHMAC is used to hash the secret with a suffix for use with HMAC
+// GenerateHMACKey make a new key that can be used with our HMAC
 func (s *Params) GenerateHMACKey(secret [32]byte) [16]byte {
 	h := []byte{}
 	h = append(h, hashMuPrefix)
@@ -173,6 +186,8 @@ func (s *Params) GenerateHMACKey(secret [32]byte) [16]byte {
 	return ret
 }
 
+// HashSeen returns the prefix hash of the input.
+// We used this hash to recognize replay attacks.
 func (s *Params) HashSeen(secret [32]byte) [32]byte {
 	h := []byte{}
 	h = append(h, hashTauPrefix)

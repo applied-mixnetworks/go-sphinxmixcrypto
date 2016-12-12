@@ -48,7 +48,7 @@ func newTestVectorRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
 	nodeKeys := make(map[[16]byte][32]byte)
 	for i := 0; i < NumMaxHops; i++ {
 		params := NewParams()
-		nodeId, err := hex.DecodeString(nodeHexOptions[i].id)
+		nodeID, err := hex.DecodeString(nodeHexOptions[i].id)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -61,7 +61,7 @@ func newTestVectorRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
 			return nil, nil, err
 		}
 		options := SphinxNodeOptions{}
-		copy(options.id[:], nodeId)
+		copy(options.id[:], nodeID)
 		copy(options.publicKey[:], publicKey)
 		copy(options.privateKey[:], privateKey)
 		node, err := NewSphinxNode(params, &options)
@@ -82,10 +82,10 @@ func newTestVectorRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
 	// Generate a forwarding message to route to the final node via the
 	// generated intermediate nodes above.
 	params := NewParams()
-	var destination_id [16]byte
+	var destID [16]byte
 	destination := route[len(route)-1]
-	copy(destination_id[:], destination[:])
-	//fmt.Printf("dest id %x %v\n\n", destination_id, destination_id)
+	copy(destID[:], destination[:])
+	//fmt.Printf("dest id %x %v\n\n", destID, destID)
 	message := []byte("the quick brown fox")
 	secret, err := hex.DecodeString("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b4")
 	if err != nil {
@@ -95,7 +95,7 @@ func newTestVectorRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	fwdMsg, err := NewOnionPacket(params, route, nodeKeys, destination_id, message, secret, padding)
+	fwdMsg, err := NewOnionPacket(params, route, nodeKeys, destID, message, secret, padding)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Unable to create forwarding message: %#v", err)
 	}
@@ -126,12 +126,12 @@ func newTestRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
 	// Generate a forwarding message to route to the final node via the
 	// generated intermediate nodes above.
 	params := NewParams()
-	var destination_id [16]byte
+	var destID [16]byte
 	destination := []byte("dest")
-	copy(destination_id[:], destination)
-	//fmt.Printf("dest id %x %v\n\n", destination_id, destination_id)
+	copy(destID[:], destination)
+	//fmt.Printf("dest id %x %v\n\n", destID, destID)
 	message := []byte("the quick brown fox")
-	fwdMsg, err := NewOnionPacket(params, route, nodeKeys, destination_id, message, nil, nil)
+	fwdMsg, err := NewOnionPacket(params, route, nodeKeys, destID, message, nil, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Unable to create forwarding message: %#v", err)
 	}

@@ -27,7 +27,7 @@ func TestPaddingVector(t *testing.T) {
 
 func TestPadding(t *testing.T) {
 	message := []byte("the quick brown fox")
-	padded_size := 2048
+	blockSize := 2048
 	_, err := AddPadding(message, 0)
 	if err != ErrInvalidBlockSize {
 		t.Error("expected ErrInvalidBlockSize")
@@ -38,36 +38,36 @@ func TestPadding(t *testing.T) {
 		t.Error("expected ErrInvalidData")
 		t.Fail()
 	}
-	padded_message, err := AddPadding(message, padded_size)
+	paddedMessage, err := AddPadding(message, blockSize)
 	if err != nil {
 		t.Error(err)
 		t.Fail()
 	}
-	if len(padded_message) != padded_size {
-		t.Error("padded_message is incorrect size")
+	if len(paddedMessage) != blockSize {
+		t.Error("paddedMessage is incorrect size")
 		t.Fail()
 	}
-	unpadded_message, err := RemovePadding(padded_message)
+	unpaddedMessage, err := RemovePadding(paddedMessage)
 	if err != nil {
 		t.Error(err)
 		t.Fail()
 	}
-	if len(unpadded_message) != len(message) {
-		t.Error("unpadded_message is incorrect size")
+	if len(unpaddedMessage) != len(message) {
+		t.Error("unpaddedMessage is incorrect size")
 		t.Fail()
 	}
-	if !bytes.Equal(message, unpadded_message) {
-		t.Error("message != unpadded_message")
+	if !bytes.Equal(message, unpaddedMessage) {
+		t.Error("message != unpaddedMessage")
 		t.Fail()
 	}
 
 	// test broken padding offset
-	padded_message = []byte("meowmeow123")
-	broken_message := padded_message[:len(padded_message)-2]
-	padding_bytes := make([]byte, 2)
-	binary.LittleEndian.PutUint16(padding_bytes, uint16(9999))
-	broken_message = append(broken_message, padding_bytes...)
-	_, err = RemovePadding(broken_message)
+	paddedMessage = []byte("meowmeow123")
+	brokenMessage := paddedMessage[:len(paddedMessage)-2]
+	paddingBytes := make([]byte, 2)
+	binary.LittleEndian.PutUint16(paddingBytes, uint16(9999))
+	brokenMessage = append(brokenMessage, paddingBytes...)
+	_, err = RemovePadding(brokenMessage)
 	if err == nil {
 		t.Errorf("expected offset padding failure")
 		t.Fail()

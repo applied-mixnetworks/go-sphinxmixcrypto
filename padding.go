@@ -35,9 +35,9 @@ func AddPadding(src []byte, blockSize int) ([]byte, error) {
 	offset := blockSize - len(src)
 	padtext := bytes.Repeat([]byte{byte(0)}, offset-2)
 	out := append(src, padtext...)
-	padding_bytes := make([]byte, 2)
-	binary.LittleEndian.PutUint16(padding_bytes, uint16(offset))
-	out = append(out, padding_bytes...)
+	paddingBytes := make([]byte, 2)
+	binary.LittleEndian.PutUint16(paddingBytes, uint16(offset))
+	out = append(out, paddingBytes...)
 	return out, nil
 }
 
