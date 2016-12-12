@@ -1,4 +1,9 @@
-// Copyright (C) 2015-2016 The Lightning Network Developers
+// Original work Copyright 2015 2016 Lightning Onion
+// Modified work Copyright 2016 David Stainton
+//
+// Use of this source code is governed by a MIT-style license
+// that can be found in the LICENSE and LICENSE-lightening-onion files
+// in the root of the source tree.
 
 package sphinxmixcrypto
 

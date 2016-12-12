@@ -1,4 +1,8 @@
-// Copyright (c) 2016 David Stainton
+// Copyright 2016 David Stainton
+//
+// Use of this source code is governed by a MIT-style license
+// that can be found in the LICENSE file in the root of the source
+// tree.
 
 package sphinxmixcrypto
 

@@ -24,19 +24,39 @@ Read the Sphinx paper:
 
 **Sphinx: A Compact and Provably Secure Mix Format**
 by George Danezis and Ian Goldberg
-http://www0.cs.ucl.ac.uk/staff/G.Danezis/papers/sphinx-eprint.pdf
+
+- http://www0.cs.ucl.ac.uk/staff/G.Danezis/papers/sphinx-eprint.pdf
 
 
 status
 ------
 
-**currently this is an unfinished work-in-progress**
+This package is binary compatible with the python library:
 
-Golang Sphinx crypto implementation using modern crypto primitives;
-Blake2b and Chacha20. Depends on native golang LIONESS wide block:
+- https://github.com/david415/sphinxmixcrypto
 
-https://github.com/david415/go-lioness
+Although the two libraries are binary compatible and share test vectors to prove it,
+go-sphinxmixcrypto is still a work-in-progress and does not yet have full feature
+parity. In particular the client's use and creation of SURBs has not yet been written,
+nor has the Nymserver's cryptographic components.
 
+
+dependencies
+------------
+
+You can see a list of dependencies on godocs:
+
+- https://godoc.org/github.com/david415/go-sphinxmixcrypto?imports
+
+Currently this library depends on my own LIONESS wide block cipher implementation:
+
+- https://github.com/david415/go-lioness
+
+The other external dependencies include:
+
+- https://git.schwanenlied.me/yawning/chacha20
+- https://github.com/minio/blake2b-simd
+- https://golang.org/x/crypto/curve25519
 
 
 =======
@@ -48,7 +68,9 @@ License details located in the LICENSE file.
 
 Some code was inspired or copied from Lightning-Onion's partial Sphinx
 implementation located here:
+
 - https://github.com/lightningnetwork/lightning-onion/blob/master/sphinx.go
+- https://github.com/lightningnetwork/lightning-onion/blob/master/sphinx_test.go
 
 Included in this repo is Lightning-Onion's MIT License file:
 LICENSE-lightening-onion
