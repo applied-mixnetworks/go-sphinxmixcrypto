@@ -120,6 +120,7 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 	sharedSecret := n.group.ExpOn(dhKey, n.privateKey)
 	headerMac := mixHeader.HeaderMAC
 	payload := packet.Payload
+	//fmt.Printf("delta %x\n", payload)
 
 	// Have we seen it already?
 	n.RLock()
@@ -166,7 +167,6 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 		return nil, fmt.Errorf("wide block cipher decryption failure: %s", err)
 	}
 
-	//fmt.Printf("B %x\n", B)
 	messageType, val, rest := n.PrefixFreeDecode(B)
 
 	if messageType == MoreHops { // next hop

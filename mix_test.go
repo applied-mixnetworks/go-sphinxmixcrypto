@@ -83,8 +83,8 @@ func newTestVectorRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
 	// generated intermediate nodes above.
 	params := NewParams()
 	var destination_id [16]byte
-	destination := []byte("dest")
-	copy(destination_id[:], destination)
+	destination := route[len(route)-1]
+	copy(destination_id[:], destination[:])
 	//fmt.Printf("dest id %x %v\n\n", destination_id, destination_id)
 	message := []byte("the quick brown fox")
 	secret, err := hex.DecodeString("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b4")

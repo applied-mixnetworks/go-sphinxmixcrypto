@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 )
 
 var (
@@ -27,26 +28,28 @@ func AddPadding(src []byte, blockSize int) ([]byte, error) {
 	if src == nil || len(src) == 0 {
 		return nil, ErrInvalidData
 	}
-	if len(src) > blockSize-8 {
+	if len(src) > blockSize-2 {
 		return nil, ErrInputTooBig
 	}
-	padding := blockSize - len(src)
-	padtext := bytes.Repeat([]byte{byte(0)}, padding-8)
+	offset := blockSize - len(src)
+	fmt.Printf("padding offset %d\n", offset)
+	padtext := bytes.Repeat([]byte{byte(0)}, offset-2)
 	out := append(src, padtext...)
-	padding_bytes := make([]byte, 8)
-	binary.PutUvarint(padding_bytes, uint64(padding))
+
+	padding_bytes := make([]byte, 2)
+	binary.LittleEndian.PutUint16(padding_bytes, uint16(offset))
+
+	fmt.Printf("add padding offset bytes %x\n", padding_bytes)
 	out = append(out, padding_bytes...)
+
 	return out, nil
 }
 
 // RemovePadding returns src with padding removed
 func RemovePadding(src []byte) ([]byte, error) {
-	length := uint64(len(src))
-	buf := bytes.NewReader(src[length-8:])
-	unpadding, err := binary.ReadUvarint(buf)
-	if err != nil {
-		return nil, ErrInvalidPadOffset
-	}
+	length := uint16(len(src))
+	unpadding := binary.LittleEndian.Uint16(src[length-2:])
+	fmt.Printf("remove padding offset bytes %x\n", unpadding)
 	if unpadding > length {
 		return nil, ErrInvalidPadding
 	}
