@@ -21,51 +21,50 @@ type HexedNodeOptions struct {
 	privateKey string
 }
 
-func newTestVectorRoute(message []byte) ([]*SphinxNode, *OnionPacket, error) {
+var nodeHexOptions = []HexedNodeOptions{
+	{
+		id:         "ff2182654d0000000000000000000000",
+		publicKey:  "d7314c8d2ba771dbe2982fa6299844f1b92736881e78ae7644f4bccbf8817a69",
+		privateKey: "306e5a009897d4e134727037f9b275294bd01fb33c0c7dbe5f1fdaed765d0c47",
+	},
+	{
+		id:         "ff0f9a62780000000000000000000000",
+		publicKey:  "5ce56657b8af66bd47df2469b10065206a2fd777a0cd17b104160256810bc976",
+		privateKey: "98967364dfe5d5f5d0180c727797d9111f3b1da573c25036ba16396579c25048",
+	},
+	{
+		id:         "ffc74d10550000000000000000000000",
+		publicKey:  "47ade5905376604cde0b57e732936b4298281c8a67b6a62c6107482eb69e2941",
+		privateKey: "18c539194baae419f50ff117cbf15456a0762845af3d0a77ba85024ba488ce58",
+	},
+	{
+		id:         "ffbb0407380000000000000000000000",
+		publicKey:  "4704aff4bc2aaaa3fd187d52913a203aba4e19f6e7b491bda8c8e67daa8daa67",
+		privateKey: "781e6fc7636d70dae8ebf2337538b22d7b64281a55505c1f12921e7b61f09c59",
+	},
+	{
+		id:         "ff81855a360000000000000000000000",
+		publicKey:  "73514173ee741afacdd4733e84f629b5cb9e34d28d072d749a8171fc6d64a930",
+		privateKey: "9863a8f1b5307938cd4bc9782411e9eea0a38b9144d096bd923085dfb8534277",
+	},
+}
 
-	nodeHexOptions := []HexedNodeOptions{
-		{
-			id:         "ff2182654d0000000000000000000000",
-			publicKey:  "d7314c8d2ba771dbe2982fa6299844f1b92736881e78ae7644f4bccbf8817a69",
-			privateKey: "306e5a009897d4e134727037f9b275294bd01fb33c0c7dbe5f1fdaed765d0c47",
-		},
-		{
-			id:         "ff0f9a62780000000000000000000000",
-			publicKey:  "5ce56657b8af66bd47df2469b10065206a2fd777a0cd17b104160256810bc976",
-			privateKey: "98967364dfe5d5f5d0180c727797d9111f3b1da573c25036ba16396579c25048",
-		},
-		{
-			id:         "ffc74d10550000000000000000000000",
-			publicKey:  "47ade5905376604cde0b57e732936b4298281c8a67b6a62c6107482eb69e2941",
-			privateKey: "18c539194baae419f50ff117cbf15456a0762845af3d0a77ba85024ba488ce58",
-		},
-		{
-			id:         "ffbb0407380000000000000000000000",
-			publicKey:  "4704aff4bc2aaaa3fd187d52913a203aba4e19f6e7b491bda8c8e67daa8daa67",
-			privateKey: "781e6fc7636d70dae8ebf2337538b22d7b64281a55505c1f12921e7b61f09c59",
-		},
-		{
-			id:         "ff81855a360000000000000000000000",
-			publicKey:  "73514173ee741afacdd4733e84f629b5cb9e34d28d072d749a8171fc6d64a930",
-			privateKey: "9863a8f1b5307938cd4bc9782411e9eea0a38b9144d096bd923085dfb8534277",
-		},
-	}
-
+func generateRoute() (map[[16]byte][32]byte, []*SphinxNode, [][16]byte) {
 	nodes := make([]*SphinxNode, NumMaxHops)
 	nodeKeys := make(map[[16]byte][32]byte)
-	for i := 0; i < NumMaxHops; i++ {
+	for i := range nodeHexOptions {
 		params := NewParams()
 		nodeID, err := hex.DecodeString(nodeHexOptions[i].id)
 		if err != nil {
-			return nil, nil, err
+			panic("wtf")
 		}
 		publicKey, err := hex.DecodeString(nodeHexOptions[i].publicKey)
 		if err != nil {
-			return nil, nil, err
+			panic("wtf")
 		}
 		privateKey, err := hex.DecodeString(nodeHexOptions[i].privateKey)
 		if err != nil {
-			return nil, nil, err
+			panic("wtf")
 		}
 		options := SphinxNodeOptions{}
 		copy(options.id[:], nodeID)
@@ -73,19 +72,22 @@ func newTestVectorRoute(message []byte) ([]*SphinxNode, *OnionPacket, error) {
 		copy(options.privateKey[:], privateKey)
 		node, err := NewSphinxNode(params, &options)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to create sphinx node state: %s", err)
+			panic("wtf")
 		}
 		nodes[i] = node
 		nodeKeys[node.id] = node.publicKey
 		//fmt.Printf("node id %x\n", node.id)
 	}
-
 	// Gather all the pub keys in the path.
 	route := make([][16]byte, len(nodes))
 	for i := 0; i < len(nodes); i++ {
 		route[i] = nodes[i].id
 	}
+	return nodeKeys, nodes, route
+}
 
+func newTestVectorRoute(message []byte) ([]*SphinxNode, *OnionPacket, error) {
+	nodeKeys, nodes, route := generateRoute()
 	// Generate a forwarding message to route to the final node via the
 	// generated intermediate nodes above.
 	params := NewParams()
@@ -314,5 +316,52 @@ func TestOnionPacketErrors(t *testing.T) {
 	if err == nil {
 		t.Error("expected an error")
 		t.Fail()
+	}
+}
+
+func BenchmarkUnwrapSphinxPacket(b *testing.B) {
+	message := []byte("the quick brown fox")
+	nodes, fwdMsg, err := newTestVectorRoute(message)
+	if err != nil {
+		b.Fatal("unable to create random onion packet")
+	}
+	for i := 0; i < b.N; i++ {
+		_, err := nodes[0].Unwrap(fwdMsg)
+		b.StopTimer()
+		if err != nil {
+			b.Fatalf("failed to process the forwarding message: %v", err)
+		}
+		nodes[0].seenSecrets = make(map[[32]byte]bool)
+		b.StartTimer()
+	}
+}
+
+func BenchmarkComposeSphinxPacket(b *testing.B) {
+	nodeKeys, _, route := generateRoute()
+
+	var destID [16]byte
+	destination := route[len(route)-1]
+	copy(destID[:], destination[:])
+
+	secret, err := hex.DecodeString("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b4")
+	if err != nil {
+		b.Fail()
+	}
+	padding, err := hex.DecodeString("3c78e065c89b26bc7b498dd6c0f24925c67a7ac0d4a191937bc7698f650391")
+	if err != nil {
+		b.Fail()
+	}
+
+	message := []byte("the quick brown fox")
+	params := NewParams()
+
+	for i := 0; i < b.N; i++ {
+		_, err := NewOnionPacket(params, route, nodeKeys, destID, message, secret, padding)
+		b.StopTimer()
+		if err != nil {
+			b.Error("unexpected an error")
+			b.Fail()
+		}
+		b.StartTimer()
 	}
 }
