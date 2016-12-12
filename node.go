@@ -12,6 +12,10 @@ import (
 	"github.com/david415/go-lioness"
 )
 
+var (
+	ErrReplayedPacket = fmt.Errorf("sphinx packet replay attempted")
+)
+
 type UnwrappedType int
 
 const (
@@ -21,11 +25,6 @@ const (
 	Failure
 )
 
-type Packet struct {
-	Alpha, Gamma [32]byte
-	Beta, Delta  []byte
-}
-
 type UnwrappedMessage struct {
 	ProcessAction             int
 	Alpha, Beta, Gamma, Delta []byte
@@ -34,7 +33,7 @@ type UnwrappedMessage struct {
 	MessageID                 []byte
 }
 
-type Options struct {
+type SphinxNodeOptions struct {
 	privateKey [32]byte
 	publicKey  [32]byte
 	id         [16]byte
@@ -53,7 +52,7 @@ type SphinxNode struct {
 	seenSecrets map[[32]byte]bool
 }
 
-func NewSphinxNode(params *Params, options *Options) (*SphinxNode, error) {
+func NewSphinxNode(params *Params, options *SphinxNodeOptions) (*SphinxNode, error) {
 	n := SphinxNode{
 		params:      params,
 		group:       NewGroupCurve25519(),
@@ -68,7 +67,6 @@ func NewSphinxNode(params *Params, options *Options) (*SphinxNode, error) {
 		n.publicKey = n.group.ExpOn(n.group.g, n.privateKey)
 		idnum := mathrand.Int31()
 		n.id = n.idEncode(uint32(idnum))
-		fmt.Printf("NODE ID %x\n", n.id)
 	} else {
 		n.privateKey = options.privateKey
 		n.publicKey = options.publicKey
@@ -95,7 +93,6 @@ func (n *SphinxNode) idEncode(idnum uint32) [16]byte {
 // Decode the prefix-free encoding.
 // Return the type, value, and the remainder of the input string
 func (n *SphinxNode) PrefixFreeDecode(s []byte) (int, []byte, []byte) {
-	fmt.Printf("PrefixFreeDecode %x\n", s)
 	if len(s) == 0 {
 		return Failure, nil, nil
 	}
@@ -108,7 +105,6 @@ func (n *SphinxNode) PrefixFreeDecode(s []byte) (int, []byte, []byte) {
 	if int(s[0]) < 128 {
 		return ClientHop, s[1 : int(s[0])+1], s[int(s[0])+1:]
 	}
-	fmt.Print("prefix free decoding FAILURE\n")
 	return Failure, nil, nil
 }
 
@@ -120,8 +116,8 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 
 	mixHeader := packet.Header
 	dhKey := mixHeader.EphemeralKey
-	sharedSecret := n.group.ExpOn(dhKey, n.privateKey)
 	routeInfo := mixHeader.RoutingInfo
+	sharedSecret := n.group.ExpOn(dhKey, n.privateKey)
 	headerMac := mixHeader.HeaderMAC
 	payload := packet.Payload
 
@@ -131,12 +127,12 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 	_, ok := n.seenSecrets[tag]
 	if ok {
 		n.RUnlock()
-		return nil, errors.New("Replay-attack detected. Shared-secret already seen.")
+		return nil, ErrReplayedPacket
 	}
 	n.RUnlock()
 
 	mac := n.params.HMAC(n.params.GenerateHMACKey(sharedSecret), routeInfo[:])
-	if bytes.Equal(headerMac[:], mac[:]) {
+	if !bytes.Equal(headerMac[:], mac[:]) {
 		// invalid MAC
 		return nil, errors.New("Invalid MAC.")
 	}
@@ -170,10 +166,10 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 		return nil, fmt.Errorf("wide block cipher decryption failure: %s", err)
 	}
 
+	//fmt.Printf("B %x\n", B)
 	messageType, val, rest := n.PrefixFreeDecode(B)
 
-	if messageType == MoreHops {
-		fmt.Println("MORE HOPS")
+	if messageType == MoreHops { // next hop
 		b := n.params.HashBlindingFactor(dhKey[:], sharedSecret)
 		alpha := n.group.ExpOn(dhKey, b)
 		gamma := B[securityParameter : securityParameter*2]
@@ -187,7 +183,6 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 		result.ProcessAction = MoreHops
 		return result, nil
 	} else if messageType == ExitNode { // process
-		fmt.Println("EXIT PROCESS")
 		zeros := bytes.Repeat([]byte{0}, securityParameter)
 		if bytes.Equal(delta[:securityParameter], zeros) {
 			innerType, val, rest := n.PrefixFreeDecode(delta[securityParameter:])
@@ -205,7 +200,6 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 		}
 		return nil, errors.New("Invalid message special destination.")
 	} else if messageType == ClientHop { // client
-		fmt.Println("EXIT CLIENT")
 		message_id := rest[:securityParameter]
 		result.ClientID = val
 		result.MessageID = message_id

@@ -15,6 +15,8 @@ var (
 	ErrInvalidPadding = errors.New("invalid padding on input")
 	// ErrInvalidPadOffset indicates a bad padding offset
 	ErrInvalidPadOffset = errors.New("invalid padding offset")
+	// ErrInputTooBig indicates the input data is too big
+	ErrInputTooBig = errors.New("input too big")
 )
 
 // AddPadding returns src with padding appended
@@ -24,6 +26,9 @@ func AddPadding(src []byte, blockSize int) ([]byte, error) {
 	}
 	if src == nil || len(src) == 0 {
 		return nil, ErrInvalidData
+	}
+	if len(src) > blockSize-8 {
+		return nil, ErrInputTooBig
 	}
 	padding := blockSize - len(src)
 	padtext := bytes.Repeat([]byte{byte(0)}, padding-8)

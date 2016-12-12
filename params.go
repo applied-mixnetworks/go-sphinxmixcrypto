@@ -1,7 +1,6 @@
 package sphinxmixcrypto
 
 import (
-	"bytes"
 	"io"
 
 	"git.schwanenlied.me/yawning/chacha20"
@@ -19,11 +18,11 @@ const (
 	chachaNonceLen    = 8
 	chachaKeyLen      = 32
 	secretKeyLen      = chachaKeyLen + chachaNonceLen
-	hashRhoPrefix     = byte(0xFF)
-	hashBlindPrefix   = byte(0xFE)
-	hashMuPrefix      = byte(0xFD)
-	hashPiPrefix      = byte(0xFC)
-	hashTauPrefix     = byte(0xFB)
+	hashRhoPrefix     = byte(0x22)
+	hashBlindPrefix   = byte(0x11)
+	hashMuPrefix      = byte(0x33)
+	hashPiPrefix      = byte(0x44)
+	hashTauPrefix     = byte(0x55)
 )
 
 type GroupCurve25519 struct {
@@ -94,19 +93,17 @@ func NewParams() *Params {
 	return &s
 }
 
-func (s *Params) GenerateStreamCipherKey(secret [32]byte) [secretKeyLen]byte {
-	// XXX or we could set the nonce to all zeros since the key is only used once
-	h := make([]byte, 33)
+func (s *Params) GenerateStreamCipherKey(secret [32]byte) [32]byte {
+	h := []byte{}
 	h = append(h, hashRhoPrefix)
-	h = append(h, secret[0:32]...)
-	hashed := blake2b.Sum512(h[0:33])
-	var ret [secretKeyLen]byte
-	copy(ret[:], hashed[:secretKeyLen])
-	return ret
+	h = append(h, secret[:]...)
+
+	return blake2b.Sum256(h)
 }
 
-func (s *Params) GenerateCipherStream(key [secretKeyLen]byte, numBytes uint) ([]byte, error) {
-	chacha, err := chacha20.NewCipher(key[:chachaKeyLen], key[chachaKeyLen:chachaKeyLen+chachaNonceLen])
+func (s *Params) GenerateCipherStream(key [chachaKeyLen]byte, numBytes uint) ([]byte, error) {
+	var nonce [8]byte
+	chacha, err := chacha20.NewCipher(key[:chachaKeyLen], nonce[:])
 	if err != nil {
 		return nil, err
 	}
@@ -116,12 +113,12 @@ func (s *Params) GenerateCipherStream(key [secretKeyLen]byte, numBytes uint) ([]
 }
 
 // HMAC authenticates our message.
-func (s *Params) HMAC(key [32]byte, data []byte) [32]byte {
-	h := blake2b.NewMAC(32, key[:])
+func (s *Params) HMAC(key [16]byte, data []byte) [16]byte {
+	h := blake2b.NewMAC(16, key[:])
 	h.Reset()
 	h.Write(data)
-	var ret [32]byte
-	copy(ret[:], h.Sum(nil)[0:securityParameter])
+	var ret [16]byte
+	copy(ret[:], h.Sum(nil))
 	return ret
 }
 
@@ -153,24 +150,29 @@ func (s *Params) Hash(data []byte) [32]byte {
 	return blake2b.Sum256(data)
 }
 
+// HashBlindingFactor compute a hash of alpha
+// and secret to use as a blinding factor
 func (s *Params) HashBlindingFactor(alpha []byte, secret [32]byte) [32]byte {
-	h := make([]byte, 41)
+	h := []byte{}
 	h = append(h, hashBlindPrefix)
 	h = append(h, alpha...)
 	h = append(h, secret[:]...)
-	return s.Hash(h)
+	return s.group.MakeExp(s.Hash(h))
 }
 
 // HashHMAC is used to hash the secret with a suffix for use with HMAC
-func (s *Params) GenerateHMACKey(secret [32]byte) [32]byte {
-	h := make([]byte, 32)
+func (s *Params) GenerateHMACKey(secret [32]byte) [16]byte {
+	h := []byte{}
 	h = append(h, hashMuPrefix)
 	h = append(h, secret[:]...)
-	return s.Hash(h)
+	hash := s.Hash(h)
+	var ret [16]byte
+	copy(ret[:], hash[0:16])
+	return ret
 }
 
 func (s *Params) HashSeen(secret [32]byte) [32]byte {
-	h := make([]byte, 41)
+	h := []byte{}
 	h = append(h, hashTauPrefix)
 	h = append(h, secret[:]...)
 	return s.Hash(h[0:32])
@@ -179,13 +181,11 @@ func (s *Params) HashSeen(secret [32]byte) [32]byte {
 // CreateBlockCipherKey returns the LIONESS block cipher key
 func (s *Params) CreateBlockCipherKey(secret [32]byte) ([lioness.KeyLen]byte, error) {
 	var ret [lioness.KeyLen]byte
-	var nonce [8]byte // zero nonce is OK since the key is used only once
-	chacha, err := chacha20.NewCipher(secret[:], nonce[:])
+	streamCipherKey := s.GenerateStreamCipherKey(secret)
+	r, err := s.GenerateCipherStream(streamCipherKey, 208)
 	if err != nil {
 		return ret, err
 	}
-	r := bytes.Repeat([]byte{0}, lioness.KeyLen)
-	chacha.XORKeyStream(r, r)
 	copy(ret[:], r)
 	return ret, nil
 }
