@@ -3,9 +3,9 @@ language: go
 
 go:
   - tip
-  - 1.7
-  - 1.6
-  - 1.5
+  - 1.7.4
+  - 1.6.4
+  - 1.5.4
 
 before_install:
  - go get github.com/mattn/goveralls
