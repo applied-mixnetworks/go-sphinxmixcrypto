@@ -43,7 +43,15 @@ https://github.com/david415/go-lioness
 license
 =======
 
-go-sphinxmixcrypto is free software made available via the GPL3.
+go-sphinxmixcrypto is free software made available via the MIT License.
+License details located in the LICENSE file.
+
+Some code was inspired or copied from Lightning-Onion's partial Sphinx
+implementation located here:
+- https://github.com/lightningnetwork/lightning-onion/blob/master/sphinx.go
+
+Included in this repo is Lightning-Onion's MIT License file:
+LICENSE-lightening-onion
 
 
 =======

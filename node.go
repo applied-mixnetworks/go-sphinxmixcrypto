@@ -1,3 +1,5 @@
+// Copyright (c) 2016 David Stainton
+
 package sphinxmixcrypto
 
 import (
