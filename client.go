@@ -173,11 +173,8 @@ func NewOnionPacket(params *Params, route [][16]byte, node_map map[[16]byte][32]
 	addrPayload := []byte{}
 	addrPayload = append(addrPayload, bytes.Repeat([]byte{0}, 16)...)
 	encodedDest := EncodeDestination(destination[:])
-	fmt.Printf("dest %x\n", destination[:])
-	fmt.Printf("encoded dest %x\n", encodedDest)
 	addrPayload = append(addrPayload, encodedDest...)
 	addrPayload = append(addrPayload, payload[:]...)
-	fmt.Printf("unpadded body %x\n", addrPayload)
 	paddedPayload, err := AddPadding(addrPayload, PayloadSize)
 	if err != nil {
 		return nil, err
@@ -201,10 +198,8 @@ func NewOnionPacket(params *Params, route [][16]byte, node_map map[[16]byte][32]
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("padded body %x\n", paddedPayload)
-	//fmt.Printf("block cipher key %x\ndecrypted block %x\n", blockCipherKey, delta)
 	for i := len(route) - 2; i > -1; i-- {
-		blockCipherKey, err := params.CreateBlockCipherKey(hopSharedSecrets[len(route)-1])
+		blockCipherKey, err := params.CreateBlockCipherKey(hopSharedSecrets[i])
 		if err != nil {
 			return nil, err
 		}

@@ -212,21 +212,6 @@ func TestSphinxNodeRelpay(t *testing.T) {
 	}
 }
 
-func TestSphinxAssocData(t *testing.T) {
-	// We want to make sure that the associated data is considered in the
-	// HMAC creation
-	nodes, fwdMsg, err := newTestRoute(5)
-	if err != nil {
-		t.Fatalf("unable to create random onion packet: %v", err)
-	}
-	payload := []byte("something else")
-	copy(fwdMsg.Payload[:], payload)
-	if _, err := nodes[0].Unwrap(fwdMsg); err == nil {
-		t.Fatalf("we should fail when associated data changes")
-	}
-
-}
-
 func TestSphinxEncodeDecode(t *testing.T) {
 	// Create some test data with a randomly populated, yet valid onion
 	// forwarding message.

@@ -111,16 +111,13 @@ func (n *SphinxNode) PrefixFreeDecode(s []byte) (int, []byte, []byte) {
 // Unwrap unwraps a layer of encryption from a sphinx packet
 // and upon success returns an UnwrappedMessage, otherwise an error.
 func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
-	fmt.Println("UNWRAP")
 	result := &UnwrappedMessage{}
-
 	mixHeader := packet.Header
 	dhKey := mixHeader.EphemeralKey
 	routeInfo := mixHeader.RoutingInfo
 	sharedSecret := n.group.ExpOn(dhKey, n.privateKey)
 	headerMac := mixHeader.HeaderMAC
 	payload := packet.Payload
-	//fmt.Printf("delta %x\n", payload)
 
 	// Have we seen it already?
 	n.RLock()
