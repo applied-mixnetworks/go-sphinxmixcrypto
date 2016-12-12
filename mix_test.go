@@ -21,7 +21,7 @@ type HexedNodeOptions struct {
 	privateKey string
 }
 
-func newTestVectorRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
+func newTestVectorRoute(message []byte) ([]*SphinxNode, *OnionPacket, error) {
 
 	nodeHexOptions := []HexedNodeOptions{
 		{
@@ -93,7 +93,6 @@ func newTestVectorRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
 	destination := route[len(route)-1]
 	copy(destID[:], destination[:])
 	//fmt.Printf("dest id %x %v\n\n", destID, destID)
-	message := []byte("the quick brown fox")
 	secret, err := hex.DecodeString("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b4")
 	if err != nil {
 		return nil, nil, err
@@ -147,7 +146,8 @@ func newTestRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
 }
 
 func TestSphinxEnd2End(t *testing.T) {
-	nodes, fwdMsg, err := newTestVectorRoute(NumMaxHops)
+	message := []byte("the quick brown fox")
+	nodes, fwdMsg, err := newTestVectorRoute(message)
 	if err != nil {
 		t.Fatalf("unable to create random onion packet: %v", err)
 	}
@@ -168,7 +168,9 @@ func TestSphinxEnd2End(t *testing.T) {
 				t.Fatalf("Processing error, node %v is the last hop in "+
 					"the path, yet it doesn't recognize so", i)
 			}
-
+			if !bytes.Equal(unwrappedMessage.Delta, message) {
+				t.Fatal("receive incorrect message")
+			}
 		} else {
 			// If this isn't the last node in the path, then the returned
 			// action should indicate that there are more hops to go.
@@ -194,6 +196,40 @@ func TestSphinxEnd2End(t *testing.T) {
 			}
 			copy(onionPacket.Payload[:], unwrappedMessage.Delta)
 			fwdMsg = &onionPacket
+
+			if i == len(nodes)-2 {
+				expectedGamma, err := hex.DecodeString("0b05b2c7b3cdb8e5532d409be5f32a16")
+				if err != nil {
+					t.Fatal("decode string fail")
+				}
+				if !bytes.Equal(expectedGamma, unwrappedMessage.Gamma) {
+					t.Fatal("payload mismatch")
+				}
+
+				expectedBeta, err := hex.DecodeString("9f486475acc1bd3bc551700f58108ea4029a250b5e893eaaf8aeb0811d84094816b3904f69d45921448454de0eb18bfda49832492a127a5682231d3848a3cb06ca17c3427063f80d662997b30bc9307a676cd6972716d1d6ee59b657f368b0fdb0245872e5157dd3de788341518c328395b415b516bd47efb86302edf840eebd9de432e08d6b9fddd4d55f75112332e403d78e536193aa172c0dbffbc9631d8c877214abef61d54bd0a35114e5f0eace")
+				if err != nil {
+					t.Fatal("decode string fail")
+				}
+				if !bytes.Equal(expectedBeta, unwrappedMessage.Beta) {
+					t.Fatal("payload mismatch")
+				}
+
+				expectedAlpha, err := hex.DecodeString("b9bc2a81df782c98a8e2b8560dc50647e2f3c013ed563b021df3e0b45378d66c")
+				if err != nil {
+					t.Fatal("decode string fail")
+				}
+				if !bytes.Equal(expectedAlpha, unwrappedMessage.Alpha) {
+					t.Fatal("payload mismatch")
+				}
+
+				expectedPayload, err := hex.DecodeString("e6908ca25832a1f2f00e90f2f51ab1e407abcef6e4d3847c161e95705e7fcf8b7d9694b09989649aaf889b3c768c8ad5e8374f4410821f3e3fc3e6b838b84d14788756519b5dbcd785103c1daef9624bb3b57d763cc29f3b4aefad111129561719333d63c6b969ac3bf1d970a1b78ecc55eb5d1a2aaaf2e78bb783d756a1c3d46dc2dccfb51125b3cae26d0ef57f4b05cc92f8d2c37acc4743b4941af4e58ecd73834c0472ca3ba199b699c2c68babbd7237ee236eb6aada05c4146717bd9355d0afac129cb9246f1baeef7d7f4ec8177b8d7a32f9750c6e7f2ae1111301375cb9ccf6a218fa3970442e638febe4a7eafd73f165d53ad914aedcc5bf17e4c569d8dbe3b6827066a2193c88457e6bba94f678a64373cb1c2954dd8a80fd1c0723657779cfe0ae2238c44ae53e9b91ae70ff50d6b778a1a2c11030c41f29dfc00528784183664d8469fe0a404691bcd7cbaa1e57c8308f8fbbd76f7c0b77765a6f5f647c06527bf7b29ad58fbd2a58710503ebb6861dd449ff6df534c7622a8356d4858758de0ecb05174ce39e1c08634254b4552068d8b46f0a62e62648f12c6a32b290e295258176190c696a1f9d6c7641d3d004b47dca7914623a4855ad5fb93a144a017cdc1ad32ed1cc3dc6411f609c6f705da565f02589e9e443d8bfafa198895d71a51e45f7940938730086ffc7c480224aca67697ecce3546c4a84753a708d041ed2e5164128ffd92cdbd81e03c9af99135cbb89a96933d56d0671faebbbae21ca5e2a0154e76bd5dac36e55b983b725a878130e63313b20d9710610f3ed678d0de4442cb91e93613deaf09367f5bd1928218f0ccbc52c6046eac69039913986e60a139d063eda60975b1979a056b7bfc7635caa2ce094b77c7b36fb03f3d61183875a5dc1d4b8837a92e60669f585ca780a863ecfc0383d4361b474e3892b2361d5a7110cf1ccaf330f171dc0119861ee7c73976530f99534cdd9df0e52139de647ebbb8253c3f519e9c2acc06a671577231c7a910d09d98d79cf6db4f98e8b8b91f6e94bb0e122b002d3ea87e68f4c02ea863e45e281501d6b52bb599543d0008d5948a7e9aba0543b06e8a663cbd4e6db35e9b5d516684b57dc9f9db6a552f2e6d786c5e9d1d3c889ebe4798832e725367ad8637bd5691cf10649875b96ff488b4a22926724d0801d4df39598e4272d98ab2d2d1c7c60fc82e80974210fbc1d7f242afa57590796836e4376a17062c71b5e9ee8f40ecbba954af9129322891406b38af530e61e84966999470fa75452ebda7a79917054e6b226d7f6c85995d1485733544b2a2ebf0a2bd67445a6c061382a065ab273342975a2ac1fbb3a0f7fffd10afc18fb1bc4c315b92215160b9cdf0c09daa50d00463a6dd1fca64139df2d633b41cb2f50be46eaf821cea6b12cd361d953326386ccc87ecdb5")
+				if err != nil {
+					t.Fatal("decode string fail")
+				}
+				if !bytes.Equal(expectedPayload, unwrappedMessage.Delta) {
+					t.Fatal("payload mismatch")
+				}
+			}
 		}
 	}
 }
