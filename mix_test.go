@@ -246,3 +246,37 @@ func TestSphinxEncodeDecode(t *testing.T) {
 		t.Fatalf("forwarding messages don't match, %v vs %v", fwdMsg, newFwdMsg)
 	}
 }
+
+func TestOnionPacketErrors(t *testing.T) {
+	params := NewParams()
+	route := make([][16]byte, 3)
+	nodeMap := make(map[[16]byte][32]byte)
+	destination := [16]byte{}
+	padding := make([]byte, 1000)
+	message := bytes.Repeat([]byte{3}, 1000)
+
+	// test for payload size check error
+	_, err := NewOnionPacket(params, route, nodeMap, destination, message, nil, padding)
+	if err == nil {
+		t.Error("expected an error")
+		t.Fail()
+	}
+
+	// test AddPadding for error condition
+	message = bytes.Repeat([]byte{3}, 2000)
+	_, err = NewOnionPacket(params, route, nodeMap, destination, message, nil, padding)
+	if err == nil {
+		t.Error("expected an error")
+		t.Fail()
+	}
+
+	// test handling error from NewMixHeader
+	message = bytes.Repeat([]byte{3}, 500)
+	padding = nil
+	route = make([][16]byte, 10)
+	_, err = NewOnionPacket(params, route, nodeMap, destination, message, nil, padding)
+	if err == nil {
+		t.Error("expected an error")
+		t.Fail()
+	}
+}

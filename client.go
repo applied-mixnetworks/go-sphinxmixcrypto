@@ -179,7 +179,7 @@ type OnionPacket struct {
 func NewOnionPacket(params *Params, route [][16]byte, nodeMap map[[16]byte][32]byte,
 	destination [16]byte, payload []byte, secret []byte, padding []byte) (*OnionPacket, error) {
 
-	if len(payload)+1+len(destination) > PayloadSize-8 { // XXX AddPadding has a 8 byte overhead
+	if len(payload)+1+len(destination) > PayloadSize-2 { // XXX AddPadding has a 2 byte overhead
 		return nil, fmt.Errorf("wrong sized payload %d > %d", len(payload), PayloadSize)
 	}
 	addrPayload := []byte{}
