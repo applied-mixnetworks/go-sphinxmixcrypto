@@ -200,6 +200,7 @@ func TestSphinxEnd2End(t *testing.T) {
 			fwdMsg = &onionPacket
 
 			if i == len(nodes)-2 {
+				fmt.Printf("MIX ID %x", hop.id)
 				expectedGamma, err := hex.DecodeString("0b05b2c7b3cdb8e5532d409be5f32a16")
 				if err != nil {
 					t.Fatal("decode string fail")

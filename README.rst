@@ -16,10 +16,7 @@ sphinx mixnet packet crypto for golang
   :alt: golang api docs for go-sphinxmixcrypto
 
 
-what sphinx?
-------------
 
-Sphinx is a mixnet packet format.
 Read the Sphinx paper:
 
 **Sphinx: A Compact and Provably Secure Mix Format**
