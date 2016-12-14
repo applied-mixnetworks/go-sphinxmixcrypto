@@ -65,7 +65,9 @@ func EncodeDestination(destination []byte) []byte {
 
 // NewMixHeader generates the a mix header containing the neccessary onion
 // routing information required to propagate the message through the mixnet.
-func NewMixHeader(params *Params, route [][16]byte, nodeMap map[[16]byte][32]byte,
+// If the computation is successful then a *MixHeader is returned along with
+// a slice of 32byte shared secrets for each mix hop.
+func NewMixHeader(params *Params, route [][16]byte, pki SphinxPKI,
 	destinationType byte, destinationID [16]byte, secret []byte, padding []byte) (*MixHeader, [][32]byte, error) {
 	routeLen := len(route)
 	if routeLen > NumMaxHops {
@@ -103,7 +105,11 @@ func NewMixHeader(params *Params, route [][16]byte, nodeMap map[[16]byte][32]byt
 	hopBlindingFactors = append(hopBlindingFactors, secretPoint)
 	for i := 0; i < routeLen; i++ {
 		hopEphemeralPubKeys[i] = params.group.MultiExpOn(params.group.g, hopBlindingFactors)
-		hopSharedSecrets[i] = params.group.MultiExpOn(nodeMap[route[i]], hopBlindingFactors)
+		pubKey, err := pki.Get(route[i])
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to retrieve identity key from PKI: %s", err)
+		}
+		hopSharedSecrets[i] = params.group.MultiExpOn(pubKey, hopBlindingFactors)
 		b := params.HashBlindingFactor(hopEphemeralPubKeys[i][:], hopSharedSecrets[i])
 		hopBlindingFactors = append(hopBlindingFactors, b)
 	}
@@ -176,7 +182,7 @@ type OnionPacket struct {
 }
 
 // NewOnionPacket creates a mixnet packet
-func NewOnionPacket(params *Params, route [][16]byte, nodeMap map[[16]byte][32]byte,
+func NewOnionPacket(params *Params, route [][16]byte, pki SphinxPKI,
 	destination [16]byte, payload []byte, secret []byte, padding []byte) (*OnionPacket, error) {
 
 	if len(payload)+1+len(destination) > PayloadSize-2 { // XXX AddPadding has a 2 byte overhead
@@ -196,7 +202,7 @@ func NewOnionPacket(params *Params, route [][16]byte, nodeMap map[[16]byte][32]b
 	destinationType := byte(ExitNode)
 	var destinationID [16]byte
 	copy(destinationID[:], bytes.Repeat([]byte{0}, 16))
-	mixHeader, hopSharedSecrets, err := NewMixHeader(params, route, nodeMap, destinationType, destinationID, secret, padding)
+	mixHeader, hopSharedSecrets, err := NewMixHeader(params, route, pki, destinationType, destinationID, secret, padding)
 	if err != nil {
 		return nil, err
 	}

@@ -88,8 +88,7 @@ func generateRoute() (map[[16]byte][32]byte, []*SphinxNode, [][16]byte) {
 
 func newTestVectorRoute(message []byte) ([]*SphinxNode, *OnionPacket, error) {
 	nodeKeys, nodes, route := generateRoute()
-	// Generate a forwarding message to route to the final node via the
-	// generated intermediate nodes above.
+	pki := NewDummyPKI(nodeKeys)
 	params := NewParams()
 	var destID [16]byte
 	destination := route[len(route)-1]
@@ -103,7 +102,7 @@ func newTestVectorRoute(message []byte) ([]*SphinxNode, *OnionPacket, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	fwdMsg, err := NewOnionPacket(params, route, nodeKeys, destID, message, secret, padding)
+	fwdMsg, err := NewOnionPacket(params, route, pki, destID, message, secret, padding)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Unable to create forwarding message: %#v", err)
 	}
@@ -124,7 +123,7 @@ func newTestRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
 		nodeKeys[node.id] = node.publicKey
 		//fmt.Printf("node id %x\n", node.id)
 	}
-
+	pki := NewDummyPKI(nodeKeys)
 	// Gather all the pub keys in the path.
 	route := make([][16]byte, len(nodes))
 	for i := 0; i < len(nodes); i++ {
@@ -139,7 +138,7 @@ func newTestRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
 	copy(destID[:], destination)
 	//fmt.Printf("dest id %x %v\n\n", destID, destID)
 	message := []byte("the quick brown fox")
-	fwdMsg, err := NewOnionPacket(params, route, nodeKeys, destID, message, nil, nil)
+	fwdMsg, err := NewOnionPacket(params, route, pki, destID, message, nil, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Unable to create forwarding message: %#v", err)
 	}
@@ -150,6 +149,7 @@ func newTestRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
 func TestSphinxEnd2End(t *testing.T) {
 	message := []byte("the quick brown fox")
 	nodes, fwdMsg, err := newTestVectorRoute(message)
+
 	if err != nil {
 		t.Fatalf("unable to create random onion packet: %v", err)
 	}
@@ -290,12 +290,13 @@ func TestOnionPacketErrors(t *testing.T) {
 	params := NewParams()
 	route := make([][16]byte, 3)
 	nodeMap := make(map[[16]byte][32]byte)
+	pki := NewDummyPKI(nodeMap)
 	destination := [16]byte{}
 	padding := make([]byte, 1000)
 	message := bytes.Repeat([]byte{3}, 1000)
 
 	// test for payload size check error
-	_, err := NewOnionPacket(params, route, nodeMap, destination, message, nil, padding)
+	_, err := NewOnionPacket(params, route, pki, destination, message, nil, padding)
 	if err == nil {
 		t.Error("expected an error")
 		t.Fail()
@@ -303,7 +304,7 @@ func TestOnionPacketErrors(t *testing.T) {
 
 	// test AddPadding for error condition
 	message = bytes.Repeat([]byte{3}, 2000)
-	_, err = NewOnionPacket(params, route, nodeMap, destination, message, nil, padding)
+	_, err = NewOnionPacket(params, route, pki, destination, message, nil, padding)
 	if err == nil {
 		t.Error("expected an error")
 		t.Fail()
@@ -313,7 +314,7 @@ func TestOnionPacketErrors(t *testing.T) {
 	message = bytes.Repeat([]byte{3}, 500)
 	padding = nil
 	route = make([][16]byte, 10)
-	_, err = NewOnionPacket(params, route, nodeMap, destination, message, nil, padding)
+	_, err = NewOnionPacket(params, route, pki, destination, message, nil, padding)
 	if err == nil {
 		t.Error("expected an error")
 		t.Fail()
@@ -339,7 +340,7 @@ func BenchmarkUnwrapSphinxPacket(b *testing.B) {
 
 func BenchmarkComposeSphinxPacket(b *testing.B) {
 	nodeKeys, _, route := generateRoute()
-
+	pki := NewDummyPKI(nodeKeys)
 	var destID [16]byte
 	destination := route[len(route)-1]
 	copy(destID[:], destination[:])
@@ -357,7 +358,7 @@ func BenchmarkComposeSphinxPacket(b *testing.B) {
 	params := NewParams()
 
 	for i := 0; i < b.N; i++ {
-		_, err := NewOnionPacket(params, route, nodeKeys, destID, message, secret, padding)
+		_, err := NewOnionPacket(params, route, pki, destID, message, secret, padding)
 		b.StopTimer()
 		if err != nil {
 			b.Error("unexpected an error")
