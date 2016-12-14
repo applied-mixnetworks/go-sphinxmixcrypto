@@ -9,11 +9,44 @@ package sphinxmixcrypto
 
 import (
 	"bytes"
+	//"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"reflect"
 	"testing"
 )
+
+// FixedNoiseReader is an implementation of io.Reader
+// that can be used as a replacement crypto/rand Reader
+// for the purpose of writing deterministic unit tests.
+type FixedNoiseReader struct {
+	count int
+	noise []byte
+}
+
+func NewFixedNoiseReader(noiseStr string) (*FixedNoiseReader, error) {
+	noise, err := hex.DecodeString(noiseStr)
+	if err != nil {
+		return nil, fmt.Errorf("NewFixedNoiseReader fail: %v", err)
+	}
+	return &FixedNoiseReader{
+		count: 0,
+		noise: noise,
+	}, nil
+}
+
+func (r *FixedNoiseReader) Read(data []byte) (int, error) {
+	readLen := len(data)
+	r.count += readLen
+	if len(data) > len(r.noise) {
+		return 0, fmt.Errorf("FixedNoiseReader fail: %d > %d noise", len(data), len(r.noise))
+	}
+	ret := r.noise[:readLen]
+	r.noise = r.noise[readLen:]
+	copy(data, ret)
+
+	return readLen, nil
+}
 
 type HexedNodeOptions struct {
 	id         string
@@ -93,16 +126,12 @@ func newTestVectorRoute(message []byte) ([]*SphinxNode, *OnionPacket, error) {
 	var destID [16]byte
 	destination := route[len(route)-1]
 	copy(destID[:], destination[:])
-	//fmt.Printf("dest id %x %v\n\n", destID, destID)
-	secret, err := hex.DecodeString("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b4")
+
+	randReader, err := NewFixedNoiseReader("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b43c78e065c89b26bc7b498dd6c0f24925c67a7ac0d4a191937bc7698f650391")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("NewFixedNoiseReader fail: %#v", err)
 	}
-	padding, err := hex.DecodeString("3c78e065c89b26bc7b498dd6c0f24925c67a7ac0d4a191937bc7698f650391")
-	if err != nil {
-		return nil, nil, err
-	}
-	fwdMsg, err := NewOnionPacket(params, route, pki, destID, message, secret, padding)
+	fwdMsg, err := NewOnionPacket(params, route, pki, destID, message, randReader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Unable to create forwarding message: %#v", err)
 	}
@@ -133,12 +162,17 @@ func newTestRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
 	// Generate a forwarding message to route to the final node via the
 	// generated intermediate nodes above.
 	params := NewParams()
+	randReader, err := NewFixedNoiseReader("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b43c78e065c89b26bc7b498dd6c0f24925c67a7ac0d4a191937bc7698f650391")
+	if err != nil {
+		return nil, nil, fmt.Errorf("NewFixedNoiseReader fail: %#v", err)
+	}
+
 	var destID [16]byte
 	destination := []byte("dest")
 	copy(destID[:], destination)
 	//fmt.Printf("dest id %x %v\n\n", destID, destID)
 	message := []byte("the quick brown fox")
-	fwdMsg, err := NewOnionPacket(params, route, pki, destID, message, nil, nil)
+	fwdMsg, err := NewOnionPacket(params, route, pki, destID, message, randReader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Unable to create forwarding message: %#v", err)
 	}
@@ -146,7 +180,7 @@ func newTestRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
 	return nodes, fwdMsg, nil
 }
 
-func TestSphinxEnd2End(t *testing.T) {
+func TestSphinxEnd2EndVectors(t *testing.T) {
 	message := []byte("the quick brown fox")
 	nodes, fwdMsg, err := newTestVectorRoute(message)
 
@@ -200,7 +234,6 @@ func TestSphinxEnd2End(t *testing.T) {
 			fwdMsg = &onionPacket
 
 			if i == len(nodes)-2 {
-				fmt.Printf("MIX ID %x", hop.id)
 				expectedGamma, err := hex.DecodeString("0b05b2c7b3cdb8e5532d409be5f32a16")
 				if err != nil {
 					t.Fatal("decode string fail")
@@ -286,38 +319,17 @@ func TestSphinxEncodeDecode(t *testing.T) {
 	}
 }
 
-func TestOnionPacketErrors(t *testing.T) {
-	params := NewParams()
-	route := make([][16]byte, 3)
-	nodeMap := make(map[[16]byte][32]byte)
-	pki := NewDummyPKI(nodeMap)
-	destination := [16]byte{}
-	padding := make([]byte, 1000)
-	message := bytes.Repeat([]byte{3}, 1000)
-
-	// test for payload size check error
-	_, err := NewOnionPacket(params, route, pki, destination, message, nil, padding)
-	if err == nil {
-		t.Error("expected an error")
-		t.Fail()
+func TestSURB(t *testing.T) {
+	nodeKeys, _, route := generateRoute()
+	pki := NewDummyPKI(nodeKeys)
+	randReader, err := NewFixedNoiseReader("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b43c78e065c89b26bc7b498dd6c0f24925c67a7ac0d4a191937bc7698f650391bb1c30c0e954c5a0a70f2789f8f25584")
+	if err != nil {
+		t.Fatalf("NewFixedNoiseReader fail: %v", err)
 	}
-
-	// test AddPadding for error condition
-	message = bytes.Repeat([]byte{3}, 2000)
-	_, err = NewOnionPacket(params, route, pki, destination, message, nil, padding)
-	if err == nil {
-		t.Error("expected an error")
-		t.Fail()
-	}
-
-	// test handling error from NewMixHeader
-	message = bytes.Repeat([]byte{3}, 500)
-	padding = nil
-	route = make([][16]byte, 10)
-	_, err = NewOnionPacket(params, route, pki, destination, message, nil, padding)
-	if err == nil {
-		t.Error("expected an error")
-		t.Fail()
+	client := NewSphinxClient(pki, randReader)
+	_, err = client.CreateNym(route)
+	if err != nil {
+		t.Fatalf("failed to create SURB: %s", err)
 	}
 }
 
@@ -325,7 +337,7 @@ func BenchmarkUnwrapSphinxPacket(b *testing.B) {
 	message := []byte("the quick brown fox")
 	nodes, fwdMsg, err := newTestVectorRoute(message)
 	if err != nil {
-		b.Fatal("unable to create random onion packet")
+		b.Fatalf("unable to create random onion packet: %v", err)
 	}
 	for i := 0; i < b.N; i++ {
 		_, err := nodes[0].Unwrap(fwdMsg)
@@ -344,26 +356,19 @@ func BenchmarkComposeSphinxPacket(b *testing.B) {
 	var destID [16]byte
 	destination := route[len(route)-1]
 	copy(destID[:], destination[:])
-
-	secret, err := hex.DecodeString("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b4")
-	if err != nil {
-		b.Fail()
-	}
-	padding, err := hex.DecodeString("3c78e065c89b26bc7b498dd6c0f24925c67a7ac0d4a191937bc7698f650391")
-	if err != nil {
-		b.Fail()
-	}
-
 	message := []byte("the quick brown fox")
 	params := NewParams()
 
 	for i := 0; i < b.N; i++ {
-		_, err := NewOnionPacket(params, route, pki, destID, message, secret, padding)
 		b.StopTimer()
+		randReader, err := NewFixedNoiseReader("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b43c78e065c89b26bc7b498dd6c0f24925c67a7ac0d4a191937bc7698f650391")
 		if err != nil {
-			b.Error("unexpected an error")
-			b.Fail()
+			b.Fatalf("unexpected an error: %v", err)
 		}
 		b.StartTimer()
+		_, err = NewOnionPacket(params, route, pki, destID, message, randReader)
+		if err != nil {
+			b.Fatalf("unexpected an error: %v", err)
+		}
 	}
 }

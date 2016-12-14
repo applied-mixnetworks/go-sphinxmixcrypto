@@ -12,6 +12,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/david415/go-lioness"
 )
@@ -68,36 +69,26 @@ func EncodeDestination(destination []byte) []byte {
 // If the computation is successful then a *MixHeader is returned along with
 // a slice of 32byte shared secrets for each mix hop.
 func NewMixHeader(params *Params, route [][16]byte, pki SphinxPKI,
-	destinationType byte, destinationID [16]byte, secret []byte, padding []byte) (*MixHeader, [][32]byte, error) {
+	destinationType byte, destinationID [16]byte, randReader io.Reader) (*MixHeader, [][32]byte, error) {
 	routeLen := len(route)
 	if routeLen > NumMaxHops {
 		return nil, nil, fmt.Errorf("route length %d exceeds max hops %d", routeLen, NumMaxHops)
 	}
 	var secretPoint [32]byte
 	var err error
-	if secret == nil {
-		secretPoint, err = params.group.GenerateSecret(rand.Reader)
-		if err != nil {
-			return nil, nil, fmt.Errorf("faileed to generate curve25519 secret: %s", err)
-		}
-	} else {
-		if len(secret) != 32 {
-			return nil, nil, errors.New("secret must be 256 bits")
-		}
-		secretArray := [32]byte{}
-		copy(secretArray[:], secret)
-		secretPoint = params.group.makeSecret(secretArray)
+	secretPoint, err = params.group.GenerateSecret(randReader)
+	if err != nil {
+		return nil, nil, fmt.Errorf("faileed to generate curve25519 secret: %s", err)
 	}
+
 	randSliceLen := (2*(NumMaxHops-routeLen)+2)*securityParameter - 1
-	if padding == nil {
-		// minus 1 for one byte destination type marker
-		randPadding := make([]byte, randSliceLen)
-		_, err = rand.Read(randPadding)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failure to read pseudo random data: %s", err)
-		}
-		copy(padding, randPadding)
+	// minus 1 for one byte destination type marker
+	padding := make([]byte, randSliceLen)
+	_, err = randReader.Read(padding)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failure to read pseudo random data: %s", err)
 	}
+
 	numHops := routeLen
 	hopEphemeralPubKeys := make([][32]byte, numHops)
 	hopSharedSecrets := make([][32]byte, numHops)
@@ -183,7 +174,7 @@ type OnionPacket struct {
 
 // NewOnionPacket creates a mixnet packet
 func NewOnionPacket(params *Params, route [][16]byte, pki SphinxPKI,
-	destination [16]byte, payload []byte, secret []byte, padding []byte) (*OnionPacket, error) {
+	destination [16]byte, payload []byte, randReader io.Reader) (*OnionPacket, error) {
 
 	if len(payload)+1+len(destination) > PayloadSize-2 { // XXX AddPadding has a 2 byte overhead
 		return nil, fmt.Errorf("wrong sized payload %d > %d", len(payload), PayloadSize)
@@ -202,7 +193,7 @@ func NewOnionPacket(params *Params, route [][16]byte, pki SphinxPKI,
 	destinationType := byte(ExitNode)
 	var destinationID [16]byte
 	copy(destinationID[:], bytes.Repeat([]byte{0}, 16))
-	mixHeader, hopSharedSecrets, err := NewMixHeader(params, route, pki, destinationType, destinationID, secret, padding)
+	mixHeader, hopSharedSecrets, err := NewMixHeader(params, route, pki, destinationType, destinationID, randReader)
 	if err != nil {
 		return nil, err
 	}
@@ -232,4 +223,104 @@ func NewOnionPacket(params *Params, route [][16]byte, pki SphinxPKI,
 		Header:  mixHeader,
 		Payload: newPayload,
 	}, nil
+}
+
+// SphinxSURB is a struct that represents a single use reply block
+type SphinxSURB struct {
+	header   *MixHeader
+	key      [32]byte
+	firstHop [16]byte
+}
+
+// SphinxClient is used for sending and receiving messages
+type SphinxClient struct {
+	keysmap    map[[16]byte][][]byte
+	pki        SphinxPKI
+	params     *Params
+	randReader io.Reader
+}
+
+// NewSphinxClient creates a new SphinxClient
+func NewSphinxClient(pki SphinxPKI, randReader io.Reader) *SphinxClient {
+	return &SphinxClient{
+		params:     NewParams(),
+		keysmap:    make(map[[16]byte][][]byte),
+		pki:        pki,
+		randReader: randReader,
+	}
+}
+
+// CreateNym creates a SURB and associates it with a Nym
+func (n *SphinxClient) CreateNym(route [][16]byte) (*SphinxSURB, error) {
+	var messageID [securityParameter]byte
+	_, err := n.randReader.Read(messageID[:])
+	if err != nil {
+		return nil, fmt.Errorf("create nym failure: %s", err)
+	}
+	encodedMessageID := EncodeDestination(messageID[:])
+	var id [securityParameter]byte
+	copy(id[:], encodedMessageID)
+	destinationType := byte(ClientHop)
+	header, hopSharedSecrets, err := NewMixHeader(n.params, route, n.pki, destinationType, id, n.randReader)
+	if err != nil {
+		return nil, fmt.Errorf("create nym failure: %v", err)
+	}
+	var ktilde [32]byte
+	_, err = rand.Read(ktilde[:])
+	if err != nil {
+		return nil, fmt.Errorf("create nym failure: %s", err)
+	}
+	keys := [][]byte{}
+	keys = append(keys, ktilde[:])
+	for i := range hopSharedSecrets {
+		key, err := n.params.CreateBlockCipherKey(hopSharedSecrets[i])
+		if err != nil {
+			return nil, fmt.Errorf("create nym failure: %s", err)
+		}
+		keys = append(keys, key[:])
+	}
+	n.keysmap[messageID] = keys
+	surb := SphinxSURB{
+		header:   header,
+		key:      ktilde,
+		firstHop: route[0],
+	}
+	return &surb, nil
+}
+
+// Decrypt decrypts a reply-message, a message sent to us
+// using a SURB we previously created. The given message ID
+// is used to lookup the correct decryption key.
+func (n *SphinxClient) Decrypt(messageID [securityParameter]byte, payload []byte) ([]byte, error) {
+	var err error
+	keys, ok := n.keysmap[messageID]
+	if !ok {
+		return nil, fmt.Errorf("key for message id %s not found", messageID)
+	}
+	ktilde := keys[0]
+	keys = keys[1:]
+	delete(n.keysmap, messageID)
+	var keyArray [lioness.KeyLen]byte
+	for i := len(keys) - 1; i < -1; i-- {
+		copy(keyArray[:], keys[i])
+		payload, err = n.params.EncryptBlock(keyArray, payload)
+		if err != nil {
+			return nil, fmt.Errorf("client decrypt failure: %v", err)
+		}
+	}
+	var k [32]byte
+	copy(k[:], ktilde)
+	blockCipherKey, err := n.params.CreateBlockCipherKey(k)
+	if err != nil {
+		return nil, errors.New("client decrypt failed to derive a block cipher key")
+	}
+	payload, err = n.params.DecryptBlock(blockCipherKey, payload)
+	if err != nil {
+		return nil, fmt.Errorf("client decrypt failure: %v", err)
+	}
+	zeros := [securityParameter]byte{}
+	if !bytes.Equal(payload[:securityParameter], zeros[:]) {
+		return nil, errors.New("corrupt payload")
+	}
+	return payload, nil
 }
