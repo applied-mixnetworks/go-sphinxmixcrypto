@@ -54,9 +54,9 @@ type SphinxNodeOptions struct {
 // SphinxNode is used to keep track of a mix node's state
 type SphinxNode struct {
 	sync.RWMutex
-	params      *Params
-	pki         SphinxPKI
-	nymServer   SphinxNymServer
+	params *Params
+	pki    SphinxPKI
+	//nymServer   SphinxNymServer
 	group       *GroupCurve25519
 	crypt       *Params
 	privateKey  [32]byte
@@ -211,6 +211,9 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 		}
 		return nil, errors.New("invalid message special destination")
 	} else if messageType == ClientHop { // client
+		if len(rest) < securityParameter {
+			return nil, fmt.Errorf("malformed client hop message")
+		}
 		messageID := rest[:securityParameter]
 		result.ClientID = val
 		result.MessageID = messageID

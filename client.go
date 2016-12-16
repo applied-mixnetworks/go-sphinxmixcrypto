@@ -9,7 +9,6 @@ package sphinxmixcrypto
 
 import (
 	"bytes"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -69,7 +68,7 @@ func EncodeDestination(destination []byte) []byte {
 // If the computation is successful then a *MixHeader is returned along with
 // a slice of 32byte shared secrets for each mix hop.
 func NewMixHeader(params *Params, route [][16]byte, pki SphinxPKI,
-	destinationType byte, destinationID [16]byte, randReader io.Reader) (*MixHeader, [][32]byte, error) {
+	destination []byte, messageID [16]byte, randReader io.Reader) (*MixHeader, [][32]byte, error) {
 	routeLen := len(route)
 	if routeLen > NumMaxHops {
 		return nil, nil, fmt.Errorf("route length %d exceeds max hops %d", routeLen, NumMaxHops)
@@ -81,9 +80,9 @@ func NewMixHeader(params *Params, route [][16]byte, pki SphinxPKI,
 		return nil, nil, fmt.Errorf("faileed to generate curve25519 secret: %s", err)
 	}
 
-	randSliceLen := (2*(NumMaxHops-routeLen)+2)*securityParameter - 1
+	paddingLen := (2*(NumMaxHops-routeLen)+2)*securityParameter - len(destination)
 	// minus 1 for one byte destination type marker
-	padding := make([]byte, randSliceLen)
+	padding := make([]byte, paddingLen)
 	_, err = randReader.Read(padding)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failure to read pseudo random data: %s", err)
@@ -119,10 +118,11 @@ func NewMixHeader(params *Params, route [][16]byte, pki SphinxPKI,
 	}
 
 	// compute beta and then gamma
-	beta := make([]byte, randSliceLen+len(destinationID)+1)
-	beta[0] = destinationType
-	copy(beta[1:], destinationID[:])
-	copy(beta[1+len(destinationID):], padding)
+	beta := make([]byte, len(destination)+len(messageID)+paddingLen)
+	copy(beta, destination)
+	copy(beta[len(destination):], messageID[:])
+	copy(beta[len(destination)+len(messageID):], padding)
+
 	betaLen := uint((2*(NumMaxHops-routeLen) + 3) * securityParameter)
 	rhoKey := params.GenerateStreamCipherKey(hopSharedSecrets[routeLen-1])
 	cipherStream, err := params.GenerateCipherStream(rhoKey, betaLen)
@@ -172,6 +172,15 @@ type OnionPacket struct {
 	Payload [PayloadSize]byte // delta
 }
 
+// NewOnionReply is used to create an OnionPacket with a specified header and payload.
+// This is used by the WrapReply to create Single Use Reply Blocks
+func NewOnionReply(header *MixHeader, payload [PayloadSize]byte) *OnionPacket {
+	return &OnionPacket{
+		Header:  header,
+		Payload: payload,
+	}
+}
+
 // NewOnionPacket creates a mixnet packet
 func NewOnionPacket(params *Params, route [][16]byte, pki SphinxPKI,
 	destination [16]byte, payload []byte, randReader io.Reader) (*OnionPacket, error) {
@@ -190,10 +199,10 @@ func NewOnionPacket(params *Params, route [][16]byte, pki SphinxPKI,
 	}
 
 	// Compute the mix header, and shared secerts for each hop.
-	destinationType := byte(ExitNode)
-	var destinationID [16]byte
-	copy(destinationID[:], bytes.Repeat([]byte{0}, 16))
-	mixHeader, hopSharedSecrets, err := NewMixHeader(params, route, pki, destinationType, destinationID, randReader)
+	destinationType := []byte{byte(ExitNode)}
+
+	var zeroDest [16]byte
+	mixHeader, hopSharedSecrets, err := NewMixHeader(params, route, pki, destinationType, zeroDest, randReader)
 	if err != nil {
 		return nil, err
 	}
@@ -225,11 +234,14 @@ func NewOnionPacket(params *Params, route [][16]byte, pki SphinxPKI,
 	}, nil
 }
 
-// SphinxSURB is a struct that represents a single use reply block
-type SphinxSURB struct {
-	header   *MixHeader
-	key      [32]byte
-	firstHop [16]byte
+// ReplyBlock is a struct that represents a single use reply block
+type ReplyBlock struct {
+	// Header is a mix header
+	Header *MixHeader
+	// Key is the symmetric encryption key
+	Key [32]byte
+	// FirstHop represent the first hop
+	FirstHop [16]byte
 }
 
 // SphinxClient is used for sending and receiving messages
@@ -238,11 +250,20 @@ type SphinxClient struct {
 	pki        SphinxPKI
 	params     *Params
 	randReader io.Reader
+	id         []byte
 }
 
 // NewSphinxClient creates a new SphinxClient
-func NewSphinxClient(pki SphinxPKI, randReader io.Reader) *SphinxClient {
+func NewSphinxClient(pki SphinxPKI, randReader io.Reader, id []byte) *SphinxClient {
+	var newID [4]byte
+	if id == nil {
+		_, err := randReader.Read(newID[:])
+		if err != nil {
+		}
+		id = []byte(fmt.Sprintf("Client %x", newID))
+	}
 	return &SphinxClient{
+		id:         id,
 		params:     NewParams(),
 		keysmap:    make(map[[16]byte][][]byte),
 		pki:        pki,
@@ -251,22 +272,20 @@ func NewSphinxClient(pki SphinxPKI, randReader io.Reader) *SphinxClient {
 }
 
 // CreateNym creates a SURB and associates it with a Nym
-func (n *SphinxClient) CreateNym(route [][16]byte) (*SphinxSURB, error) {
+func (n *SphinxClient) CreateNym(route [][16]byte) (*ReplyBlock, error) {
+
 	var messageID [securityParameter]byte
 	_, err := n.randReader.Read(messageID[:])
 	if err != nil {
 		return nil, fmt.Errorf("create nym failure: %s", err)
 	}
-	encodedMessageID := EncodeDestination(messageID[:])
-	var id [securityParameter]byte
-	copy(id[:], encodedMessageID)
-	destinationType := byte(ClientHop)
-	header, hopSharedSecrets, err := NewMixHeader(n.params, route, n.pki, destinationType, id, n.randReader)
+	encodedClientID := EncodeDestination(n.id[:])
+	header, hopSharedSecrets, err := NewMixHeader(n.params, route, n.pki, encodedClientID, messageID, n.randReader)
 	if err != nil {
 		return nil, fmt.Errorf("create nym failure: %v", err)
 	}
 	var ktilde [32]byte
-	_, err = rand.Read(ktilde[:])
+	_, err = n.randReader.Read(ktilde[:])
 	if err != nil {
 		return nil, fmt.Errorf("create nym failure: %s", err)
 	}
@@ -280,10 +299,10 @@ func (n *SphinxClient) CreateNym(route [][16]byte) (*SphinxSURB, error) {
 		keys = append(keys, key[:])
 	}
 	n.keysmap[messageID] = keys
-	surb := SphinxSURB{
-		header:   header,
-		key:      ktilde,
-		firstHop: route[0],
+	surb := ReplyBlock{
+		Header:   header,
+		Key:      ktilde,
+		FirstHop: route[0],
 	}
 	return &surb, nil
 }
@@ -301,7 +320,7 @@ func (n *SphinxClient) Decrypt(messageID [securityParameter]byte, payload []byte
 	keys = keys[1:]
 	delete(n.keysmap, messageID)
 	var keyArray [lioness.KeyLen]byte
-	for i := len(keys) - 1; i < -1; i-- {
+	for i := len(keys) - 1; i > -1; i-- {
 		copy(keyArray[:], keys[i])
 		payload, err = n.params.EncryptBlock(keyArray, payload)
 		if err != nil {
@@ -322,5 +341,10 @@ func (n *SphinxClient) Decrypt(messageID [securityParameter]byte, payload []byte
 	if !bytes.Equal(payload[:securityParameter], zeros[:]) {
 		return nil, errors.New("corrupt payload")
 	}
-	return payload, nil
+
+	unpaddedPayload, err := RemovePadding(payload[securityParameter:])
+	if err != nil {
+		return nil, errors.New("failed to unpad payload")
+	}
+	return unpaddedPayload, nil
 }
