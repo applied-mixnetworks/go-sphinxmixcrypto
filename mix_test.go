@@ -91,7 +91,6 @@ func generateRoute() (map[[16]byte][32]byte, []*SphinxNode, [][16]byte) {
 	nodes := make([]*SphinxNode, NumMaxHops)
 	nodeKeys := make(map[[16]byte][32]byte)
 	for i := range nodeHexOptions {
-		params := NewParams()
 		nodeID, err := hex.DecodeString(nodeHexOptions[i].id)
 		if err != nil {
 			panic("wtf")
@@ -108,10 +107,7 @@ func generateRoute() (map[[16]byte][32]byte, []*SphinxNode, [][16]byte) {
 		copy(options.id[:], nodeID)
 		copy(options.publicKey[:], publicKey)
 		copy(options.privateKey[:], privateKey)
-		node, err := NewSphinxNode(params, &options)
-		if err != nil {
-			panic("wtf")
-		}
+		node := NewSphinxNode(&options)
 		nodes[i] = node
 		nodeKeys[node.id] = node.publicKey
 	}
@@ -127,8 +123,11 @@ func newTestRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
 	nodes := make([]*SphinxNode, NumMaxHops)
 	nodeKeys := make(map[[16]byte][32]byte)
 	for i := 0; i < NumMaxHops; i++ {
-		params := NewParams()
-		node, err := NewSphinxNode(params, nil)
+		options, err := NewSphinxNodeOptions()
+		if err != nil {
+			return nil, nil, err
+		}
+		node := NewSphinxNode(options)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to create sphinx node state: %s", err)
 		}

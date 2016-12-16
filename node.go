@@ -51,6 +51,38 @@ type SphinxNodeOptions struct {
 	id         [16]byte
 }
 
+// NewSphinxNodeOptions creates new key material and node id.
+// Not suitable for deterministic unit tests.
+// TODO: replace use of mathrand with io.Reader interface.
+func NewSphinxNodeOptions() (*SphinxNodeOptions, error) {
+	group := NewGroupCurve25519()
+	var err error
+	n := SphinxNodeOptions{}
+	n.privateKey, err = group.GenerateSecret(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	n.publicKey = group.ExpOn(group.g, n.privateKey)
+	idnum := mathrand.Int31()
+	n.id = idEncode(uint32(idnum))
+	return &n, nil
+}
+
+// idEncode transforms a uint32 into a 16 byte ID
+func idEncode(idnum uint32) [16]byte {
+	count := 16 - 4 - 1
+	zeros := bytes.Repeat([]byte{0}, count)
+	bs := make([]byte, 4)
+	binary.LittleEndian.PutUint32(bs, idnum)
+	id := []byte{}
+	id = append(id, byte(0xff))
+	id = append(id, bs...)
+	id = append(id, zeros...)
+	var ret [16]byte
+	copy(ret[:], id)
+	return ret
+}
+
 // SphinxNode is used to keep track of a mix node's state
 type SphinxNode struct {
 	sync.RWMutex
@@ -66,42 +98,16 @@ type SphinxNode struct {
 }
 
 // NewSphinxNode creates a new SphinxNode
-func NewSphinxNode(params *Params, options *SphinxNodeOptions) (*SphinxNode, error) {
+func NewSphinxNode(options *SphinxNodeOptions) *SphinxNode {
 	n := SphinxNode{
-		params:      params,
+		params:      NewParams(),
 		group:       NewGroupCurve25519(),
 		seenSecrets: make(map[[32]byte]bool),
 	}
-	if options == nil {
-		var err error
-		n.privateKey, err = n.group.GenerateSecret(rand.Reader)
-		if err != nil {
-			return nil, err
-		}
-		n.publicKey = n.group.ExpOn(n.group.g, n.privateKey)
-		idnum := mathrand.Int31()
-		n.id = n.idEncode(uint32(idnum))
-	} else {
-		n.privateKey = options.privateKey
-		n.publicKey = options.publicKey
-		n.id = options.id
-	}
-	return &n, nil
-}
-
-// idEncode transforms a uint32 into a 16 byte ID
-func (n *SphinxNode) idEncode(idnum uint32) [16]byte {
-	count := 16 - 4 - 1 // 4 is len of uint32
-	zeros := bytes.Repeat([]byte{0}, count)
-	bs := make([]byte, 4)
-	binary.LittleEndian.PutUint32(bs, idnum)
-	id := []byte{}
-	id = append(id, byte(0xff))
-	id = append(id, bs...)
-	id = append(id, zeros...)
-	var ret [16]byte
-	copy(ret[:], id)
-	return ret
+	n.privateKey = options.privateKey
+	n.publicKey = options.publicKey
+	n.id = options.id
+	return &n
 }
 
 // PrefixFreeDecode decodes the prefix-free encoding.
