@@ -32,10 +32,7 @@ This package is binary compatible with the python library:
 
 - https://github.com/david415/sphinxmixcrypto
 
-Although the two libraries are binary compatible and share test vectors to prove it,
-go-sphinxmixcrypto is still a work-in-progress and does not yet have full feature
-parity. In particular the client's use and creation of SURBs has not yet been written,
-nor has the Nymserver's cryptographic components.
+The two libraries share unit test vectors to prove that they are binary compatible.
 
 
 dependencies
