@@ -1,0 +1,11 @@
+
+Files: nym_server.go, params.go, params_test.go, padding.go, padding_test, pki.go, doc.go
+Copyright:
+  Copyright (C) 2016 David Stainton
+License: MIT
+
+Files: node.go, client.go, mix_test.go, encoding.go
+Copyright:
+  Copyright (C) 2015-2016 The Lightning Network Developers
+  Copyright (C) 2016 David Stainton
+License: MIT
