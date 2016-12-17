@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"testing"
 )
@@ -46,6 +47,29 @@ func (r *FixedNoiseReader) Read(data []byte) (int, error) {
 	copy(data, ret)
 
 	return readLen, nil
+}
+
+func NewTestOnionPacketFactory(pki SphinxPKI, randReader io.Reader) *OnionPacketFactory {
+	factory := OnionPacketFactory{
+		group:            NewGroupCurve25519(),
+		blockCipher:      NewLionessBlockCipher(),
+		pki:              pki,
+		randReader:       randReader,
+		mixHeaderFactory: NewTestMixHeaderFactory(pki, randReader),
+	}
+	return &factory
+}
+
+func NewTestMixHeaderFactory(pki SphinxPKI, randReader io.Reader) *MixHeaderFactory {
+	factory := MixHeaderFactory{
+		group:        NewGroupCurve25519(),
+		blockCipher:  NewLionessBlockCipher(),
+		streamCipher: &Chacha20Stream{},
+		digest:       NewBlake2bDigest(),
+		pki:          pki,
+		randReader:   randReader,
+	}
+	return &factory
 }
 
 type ExpectedState struct {
@@ -143,7 +167,6 @@ func newTestRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
 
 	// Generate a forwarding message to route to the final node via the
 	// generated intermediate nodes above.
-	params := NewParams()
 	randReader, err := NewFixedNoiseReader("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b43c78e065c89b26bc7b498dd6c0f24925c67a7ac0d4a191937bc7698f650391")
 	if err != nil {
 		return nil, nil, fmt.Errorf("NewFixedNoiseReader fail: %#v", err)
@@ -153,7 +176,8 @@ func newTestRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
 	destination := []byte("dest")
 	copy(destID[:], destination)
 	message := []byte("the quick brown fox")
-	fwdMsg, err := NewOnionPacket(params, route, pki, destID, message, randReader)
+	onionPacketFactory := NewTestOnionPacketFactory(pki, randReader)
+	fwdMsg, err := onionPacketFactory.BuildForwardOnionPacket(route, destID, message)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Unable to create forwarding message: %#v", err)
 	}
@@ -161,7 +185,7 @@ func newTestRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
 	return nodes, fwdMsg, nil
 }
 
-func TestSphinxNodeRelpay(t *testing.T) {
+func TestSphinxNodeReplay(t *testing.T) {
 	// We'd like to ensure that the sphinx node itself rejects all replayed
 	// packets which share the same shared secret.
 	nodes, fwdMsg, err := newTestRoute(NumMaxHops)
@@ -214,6 +238,7 @@ func MixStateMachine(firstHop [16]byte, nodeMap map[[16]byte]*SphinxNode, onionP
 	var err error
 	unwrappedMessage := &UnwrappedMessage{}
 	var hop [16]byte
+	var decodedHop []byte
 	copy(hop[:], firstHop[:])
 
 	for {
@@ -239,14 +264,14 @@ func MixStateMachine(firstHop [16]byte, nodeMap map[[16]byte]*SphinxNode, onionP
 			copy(onionPacket.Payload[:], unwrappedMessage.Delta)
 			copy(hop[:], unwrappedMessage.NextHop)
 
-			decodedHop, err := hex.DecodeString(expected.hop)
+			decodedHop, err = hex.DecodeString(expected.hop)
 			if err != nil {
 				unwrappedMessage = nil
 				err = errors.New("hex decode fail")
 				break
 			}
 			if bytes.Equal(decodedHop[:], hop[:]) {
-				err := EqualHexBytes(expected.alpha, unwrappedMessage.Alpha)
+				err = EqualHexBytes(expected.alpha, unwrappedMessage.Alpha)
 				if err != nil {
 					unwrappedMessage = nil
 					err = errors.New("alpha mismatch")
@@ -271,7 +296,6 @@ func MixStateMachine(firstHop [16]byte, nodeMap map[[16]byte]*SphinxNode, onionP
 					break
 				}
 			}
-
 		} else if unwrappedMessage.ProcessAction == ClientHop {
 			break
 		} else if unwrappedMessage.ProcessAction == ExitNode {
@@ -296,8 +320,25 @@ func EqualHexBytes(h string, b []byte) error {
 	return errors.New("not equal")
 }
 
+func NewTestSphinxClient(pki SphinxPKI, randReader io.Reader, id []byte) *SphinxClient {
+	var newID [4]byte
+	if id == nil {
+		_, err := randReader.Read(newID[:])
+		if err != nil {
+		}
+		id = []byte(fmt.Sprintf("Client %x", newID))
+	}
+	return &SphinxClient{
+		id:               id,
+		keysmap:          make(map[[16]byte][][]byte),
+		pki:              pki,
+		randReader:       randReader,
+		blockCipher:      NewLionessBlockCipher(),
+		mixHeaderFactory: NewTestMixHeaderFactory(pki, randReader),
+	}
+}
+
 func TestSURB(t *testing.T) {
-	params := NewParams()
 	nodeKeys, nodes, route := generateRoute()
 	nodeMap := make(map[[16]byte]*SphinxNode)
 	for i := range nodes {
@@ -308,13 +349,13 @@ func TestSURB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFixedNoiseReader fail: %v", err)
 	}
-	client := NewSphinxClient(pki, randReader, nil)
+	client := NewTestSphinxClient(pki, randReader, nil)
 	surb, err := client.CreateNym(route)
 	if err != nil {
 		t.Fatalf("failed to create SURB: %v", err)
 	}
 	message := []byte("Open, secure and reliable connectivity is necessary (although not sufficient) to excercise the human rights such as freedom of expression and freedom of association [FOC], as defined in the Universal Declaration of Human Rights [UDHR].")
-	firstHop, onionPacket, err := WrapReply(params, surb, message)
+	firstHop, onionPacket, err := client.WrapReply(surb, message)
 	if err != nil {
 		t.Fatalf("failed to wrap reply: %v", err)
 	}
@@ -351,12 +392,13 @@ func TestVectorsSendMessage(t *testing.T) {
 		nodeMap[nodes[i].id] = nodes[i]
 	}
 	pki := NewDummyPKI(nodeKeys)
-	params := NewParams()
 	randReader, err := NewFixedNoiseReader("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b43c78e065c89b26bc7b498dd6c0f24925c67a7ac0d4a191937bc7698f650391")
 	if err != nil {
 		t.Fatalf("NewFixedNoiseReader fail: %#v", err)
 	}
-	onionPacket, err := NewOnionPacket(params, route, pki, route[len(route)-1], message, randReader)
+
+	onionPacketFactory := NewTestOnionPacketFactory(pki, randReader)
+	onionPacket, err := onionPacketFactory.BuildForwardOnionPacket(route, route[len(route)-1], message)
 	if err != nil {
 		t.Fatalf("Unable to create forwarding message: %#v", err)
 	}
@@ -387,12 +429,12 @@ func BenchmarkUnwrapSphinxPacket(b *testing.B) {
 		nodeMap[nodes[i].id] = nodes[i]
 	}
 	pki := NewDummyPKI(nodeKeys)
-	params := NewParams()
 	randReader, err := NewFixedNoiseReader("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b43c78e065c89b26bc7b498dd6c0f24925c67a7ac0d4a191937bc7698f650391")
 	if err != nil {
 		b.Fatalf("NewFixedNoiseReader fail: %#v", err)
 	}
-	fwdMsg, err := NewOnionPacket(params, route, pki, route[len(route)-1], message, randReader)
+	onionPacketFactory := NewTestOnionPacketFactory(pki, randReader)
+	fwdMsg, err := onionPacketFactory.BuildForwardOnionPacket(route, route[len(route)-1], message)
 	if err != nil {
 		b.Fatalf("Unable to create forwarding message: %#v", err)
 	}
@@ -415,7 +457,6 @@ func BenchmarkComposeSphinxPacket(b *testing.B) {
 	destination := route[len(route)-1]
 	copy(destID[:], destination[:])
 	message := []byte("the quick brown fox")
-	params := NewParams()
 
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
@@ -424,7 +465,8 @@ func BenchmarkComposeSphinxPacket(b *testing.B) {
 			b.Fatalf("unexpected an error: %v", err)
 		}
 		b.StartTimer()
-		_, err = NewOnionPacket(params, route, pki, destID, message, randReader)
+		onionPacketFactory := NewTestOnionPacketFactory(pki, randReader)
+		_, err = onionPacketFactory.BuildForwardOnionPacket(route, destID, message)
 		if err != nil {
 			b.Fatalf("unexpected an error: %v", err)
 		}

@@ -86,23 +86,25 @@ func idEncode(idnum uint32) [16]byte {
 // SphinxNode is used to keep track of a mix node's state
 type SphinxNode struct {
 	sync.RWMutex
-	params *Params
-	pki    SphinxPKI
-	//nymServer   SphinxNymServer
-	group       *GroupCurve25519
-	crypt       *Params
-	privateKey  [32]byte
-	publicKey   [32]byte
-	id          [16]byte
-	seenSecrets map[[32]byte]bool
+	pki          SphinxPKI
+	group        *GroupCurve25519
+	privateKey   [32]byte
+	publicKey    [32]byte
+	id           [16]byte
+	seenSecrets  map[[32]byte]bool
+	digest       Digest
+	streamCipher StreamCipher
+	blockCipher  BlockCipher
 }
 
 // NewSphinxNode creates a new SphinxNode
 func NewSphinxNode(options *SphinxNodeOptions) *SphinxNode {
 	n := SphinxNode{
-		params:      NewParams(),
-		group:       NewGroupCurve25519(),
-		seenSecrets: make(map[[32]byte]bool),
+		group:        NewGroupCurve25519(),
+		seenSecrets:  make(map[[32]byte]bool),
+		digest:       NewBlake2bDigest(),
+		streamCipher: &Chacha20Stream{},
+		blockCipher:  NewLionessBlockCipher(),
 	}
 	n.privateKey = options.privateKey
 	n.publicKey = options.publicKey
@@ -141,7 +143,7 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 
 	// Have we seen it already?
 	n.RLock()
-	tag := n.params.HashSeen(sharedSecret)
+	tag := n.digest.HashReplay(sharedSecret)
 	_, ok := n.seenSecrets[tag]
 	if ok {
 		n.RUnlock()
@@ -149,7 +151,7 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 	}
 	n.RUnlock()
 
-	mac, err := n.params.HMAC(n.params.GenerateHMACKey(sharedSecret), routeInfo[:])
+	mac, err := n.digest.HMAC(n.digest.DeriveHMACKey(sharedSecret), routeInfo[:])
 	if err != nil {
 		return nil, fmt.Errorf("HMAC fail: %s", err)
 	}
@@ -170,7 +172,7 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 	n.Unlock()
 
 	cipherStreamSize := len(routeInfo) + (2 * securityParameter)
-	cipherStream, err := n.params.GenerateCipherStream(n.params.GenerateStreamCipherKey(sharedSecret), uint(cipherStreamSize))
+	cipherStream, err := n.streamCipher.GenerateStream(n.digest.DeriveStreamCipherKey(sharedSecret), uint(cipherStreamSize))
 	if err != nil {
 		// stream cipher failure
 		return nil, fmt.Errorf("stream cipher failure: %s", err)
@@ -179,11 +181,11 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 	padding := make([]byte, 2*securityParameter)
 	lioness.XorBytes(B, append(routeInfo[:], padding...), cipherStream)
 
-	deltaKey, err := n.params.CreateBlockCipherKey(sharedSecret)
+	deltaKey, err := n.blockCipher.CreateBlockCipherKey(sharedSecret)
 	if err != nil {
 		return nil, fmt.Errorf("createBlockCipherKey failure: %s", err)
 	}
-	delta, err := n.params.DecryptBlock(deltaKey, payload[:])
+	delta, err := n.blockCipher.Decrypt(deltaKey, payload[:])
 	if err != nil {
 		return nil, fmt.Errorf("wide block cipher decryption failure: %s", err)
 	}
@@ -191,7 +193,9 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 	messageType, val, rest := n.PrefixFreeDecode(B)
 
 	if messageType == MoreHops { // next hop
-		b := n.params.HashBlindingFactor(dhKey[:], sharedSecret)
+		var ray [32]byte
+		copy(ray[:], dhKey[:])
+		b := n.digest.HashBlindingFactor(ray, sharedSecret)
 		alpha := n.group.ExpOn(dhKey, b)
 		gamma := B[securityParameter : securityParameter*2]
 		beta := B[securityParameter*2:]

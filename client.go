@@ -9,6 +9,7 @@ package sphinxmixcrypto
 
 import (
 	"bytes"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -63,19 +64,41 @@ func EncodeDestination(destination []byte) []byte {
 	return ret
 }
 
-// NewMixHeader generates the a mix header containing the neccessary onion
+// MixHeaderFactory builds mix headers
+type MixHeaderFactory struct {
+	group        *GroupCurve25519
+	blockCipher  BlockCipher
+	streamCipher StreamCipher
+	digest       Digest
+	pki          SphinxPKI
+	randReader   io.Reader
+}
+
+// NewMixHeaderFactory creates a new mix header factory
+func NewMixHeaderFactory(pki SphinxPKI) *MixHeaderFactory {
+	factory := MixHeaderFactory{
+		group:        NewGroupCurve25519(),
+		blockCipher:  NewLionessBlockCipher(),
+		streamCipher: &Chacha20Stream{},
+		digest:       NewBlake2bDigest(),
+		pki:          pki,
+		randReader:   rand.Reader,
+	}
+	return &factory
+}
+
+// BuildHeader generates a mix header containing the neccessary onion
 // routing information required to propagate the message through the mixnet.
 // If the computation is successful then a *MixHeader is returned along with
 // a slice of 32byte shared secrets for each mix hop.
-func NewMixHeader(params *Params, route [][16]byte, pki SphinxPKI,
-	destination []byte, messageID [16]byte, randReader io.Reader) (*MixHeader, [][32]byte, error) {
+func (f *MixHeaderFactory) BuildHeader(route [][16]byte, destination []byte, messageID [16]byte) (*MixHeader, [][32]byte, error) {
 	routeLen := len(route)
 	if routeLen > NumMaxHops {
 		return nil, nil, fmt.Errorf("route length %d exceeds max hops %d", routeLen, NumMaxHops)
 	}
 	var secretPoint [32]byte
 	var err error
-	secretPoint, err = params.group.GenerateSecret(randReader)
+	secretPoint, err = f.group.GenerateSecret(f.randReader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("faileed to generate curve25519 secret: %s", err)
 	}
@@ -83,7 +106,7 @@ func NewMixHeader(params *Params, route [][16]byte, pki SphinxPKI,
 	paddingLen := (2*(NumMaxHops-routeLen)+2)*securityParameter - len(destination)
 	// minus 1 for one byte destination type marker
 	padding := make([]byte, paddingLen)
-	_, err = randReader.Read(padding)
+	_, err = f.randReader.Read(padding)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failure to read pseudo random data: %s", err)
 	}
@@ -93,14 +116,17 @@ func NewMixHeader(params *Params, route [][16]byte, pki SphinxPKI,
 	hopSharedSecrets := make([][32]byte, numHops)
 	var hopBlindingFactors [][32]byte
 	hopBlindingFactors = append(hopBlindingFactors, secretPoint)
+
 	for i := 0; i < routeLen; i++ {
-		hopEphemeralPubKeys[i] = params.group.MultiExpOn(params.group.g, hopBlindingFactors)
-		pubKey, err := pki.Get(route[i])
+		hopEphemeralPubKeys[i] = f.group.MultiExpOn(f.group.g, hopBlindingFactors)
+		pubKey, err := f.pki.Get(route[i])
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to retrieve identity key from PKI: %s", err)
 		}
-		hopSharedSecrets[i] = params.group.MultiExpOn(pubKey, hopBlindingFactors)
-		b := params.HashBlindingFactor(hopEphemeralPubKeys[i][:], hopSharedSecrets[i])
+		hopSharedSecrets[i] = f.group.MultiExpOn(pubKey, hopBlindingFactors)
+		var keyArray [32]byte
+		copy(keyArray[:], hopEphemeralPubKeys[i][:])
+		b := f.digest.HashBlindingFactor(keyArray, hopSharedSecrets[i])
 		hopBlindingFactors = append(hopBlindingFactors, b)
 	}
 
@@ -109,8 +135,8 @@ func NewMixHeader(params *Params, route [][16]byte, pki SphinxPKI,
 	filler := make([]byte, (numHops-1)*hopSize)
 	for i := 1; i < numHops; i++ {
 		min := (2*(NumMaxHops-i) + 3) * securityParameter
-		streamKey := params.GenerateStreamCipherKey(hopSharedSecrets[i-1])
-		streamBytes, err := params.GenerateCipherStream(streamKey, numStreamBytes)
+		streamKey := f.digest.DeriveStreamCipherKey(hopSharedSecrets[i-1])
+		streamBytes, err := f.streamCipher.GenerateStream(streamKey, numStreamBytes)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to compute filler strings: %s", err)
 		}
@@ -124,15 +150,15 @@ func NewMixHeader(params *Params, route [][16]byte, pki SphinxPKI,
 	copy(beta[len(destination)+len(messageID):], padding)
 
 	betaLen := uint((2*(NumMaxHops-routeLen) + 3) * securityParameter)
-	rhoKey := params.GenerateStreamCipherKey(hopSharedSecrets[routeLen-1])
-	cipherStream, err := params.GenerateCipherStream(rhoKey, betaLen)
+	rhoKey := f.digest.DeriveStreamCipherKey(hopSharedSecrets[routeLen-1])
+	cipherStream, err := f.streamCipher.GenerateStream(rhoKey, betaLen)
 	if err != nil {
 		return nil, nil, fmt.Errorf("stream cipher fail: %s", err)
 	}
 	lioness.XorBytes(beta, beta, cipherStream)
 	beta = append(beta, filler...)
-	gammaKey := params.GenerateHMACKey(hopSharedSecrets[routeLen-1])
-	gamma, err := params.HMAC(gammaKey, beta)
+	gammaKey := f.digest.DeriveHMACKey(hopSharedSecrets[routeLen-1])
+	gamma, err := f.digest.HMAC(gammaKey, beta)
 	if err != nil {
 		return nil, nil, fmt.Errorf("HMAC fail: %s", err)
 	}
@@ -150,14 +176,14 @@ func NewMixHeader(params *Params, route [][16]byte, pki SphinxPKI,
 		newBeta = append(newBeta, gamma[:]...)
 		betaSlice := uint((2*NumMaxHops - 1) * securityParameter)
 		newBeta = append(newBeta, prevBeta[:betaSlice]...)
-		rhoKey := params.GenerateStreamCipherKey(hopSharedSecrets[i])
+		rhoKey := f.digest.DeriveStreamCipherKey(hopSharedSecrets[i])
 		streamSlice := uint((2*NumMaxHops + 1) * securityParameter)
-		cipherStream, err := params.GenerateCipherStream(rhoKey, streamSlice)
+		cipherStream, err := f.streamCipher.GenerateStream(rhoKey, streamSlice)
 		if err != nil {
 			return nil, nil, fmt.Errorf("stream cipher failure: %s", err)
 		}
 		lioness.XorBytes(newBeta, newBeta, cipherStream)
-		gamma, err = params.HMAC(params.GenerateHMACKey(hopSharedSecrets[i]), newBeta)
+		gamma, err = f.digest.HMAC(f.digest.DeriveHMACKey(hopSharedSecrets[i]), newBeta)
 		if err != nil {
 			return nil, nil, fmt.Errorf("HMAC fail: %s", err)
 		}
@@ -191,9 +217,29 @@ func NewOnionReply(header *MixHeader, payload [PayloadSize]byte) *OnionPacket {
 	}
 }
 
-// NewOnionPacket creates a mixnet packet
-func NewOnionPacket(params *Params, route [][16]byte, pki SphinxPKI,
-	destination [16]byte, payload []byte, randReader io.Reader) (*OnionPacket, error) {
+// OnionPacketFactory builds onion packets
+type OnionPacketFactory struct {
+	group            *GroupCurve25519
+	blockCipher      BlockCipher
+	pki              SphinxPKI
+	randReader       io.Reader
+	mixHeaderFactory *MixHeaderFactory
+}
+
+// NewOnionPacketFactory creates a new onion packet factory
+func NewOnionPacketFactory(pki SphinxPKI) *OnionPacketFactory {
+	factory := OnionPacketFactory{
+		group:            NewGroupCurve25519(),
+		blockCipher:      NewLionessBlockCipher(),
+		pki:              pki,
+		randReader:       rand.Reader,
+		mixHeaderFactory: NewMixHeaderFactory(pki),
+	}
+	return &factory
+}
+
+// BuildForwardOnionPacket builds a forward oniion packet
+func (f *OnionPacketFactory) BuildForwardOnionPacket(route [][16]byte, destination [16]byte, payload []byte) (*OnionPacket, error) {
 
 	if len(payload)+1+len(destination) > PayloadSize-2 { // XXX AddPadding has a 2 byte overhead
 		return nil, fmt.Errorf("wrong sized payload %d > %d", len(payload), PayloadSize)
@@ -212,26 +258,26 @@ func NewOnionPacket(params *Params, route [][16]byte, pki SphinxPKI,
 	destinationType := []byte{byte(ExitNode)}
 
 	var zeroDest [16]byte
-	mixHeader, hopSharedSecrets, err := NewMixHeader(params, route, pki, destinationType, zeroDest, randReader)
+	mixHeader, hopSharedSecrets, err := f.mixHeaderFactory.BuildHeader(route, destinationType, zeroDest)
 	if err != nil {
 		return nil, err
 	}
 
 	// compute the delta values
-	blockCipherKey, err := params.CreateBlockCipherKey(hopSharedSecrets[len(route)-1])
+	blockCipherKey, err := f.blockCipher.CreateBlockCipherKey(hopSharedSecrets[len(route)-1])
 	if err != nil {
 		return nil, err
 	}
-	delta, err := params.EncryptBlock(blockCipherKey, paddedPayload)
+	delta, err := f.blockCipher.Encrypt(blockCipherKey, paddedPayload)
 	if err != nil {
 		return nil, err
 	}
 	for i := len(route) - 2; i > -1; i-- {
-		blockCipherKey, err := params.CreateBlockCipherKey(hopSharedSecrets[i])
+		blockCipherKey, err := f.blockCipher.CreateBlockCipherKey(hopSharedSecrets[i])
 		if err != nil {
 			return nil, err
 		}
-		delta, err = params.EncryptBlock(blockCipherKey, delta)
+		delta, err = f.blockCipher.Encrypt(blockCipherKey, delta)
 		if err != nil {
 			return nil, err
 		}
@@ -256,59 +302,62 @@ type ReplyBlock struct {
 
 // SphinxClient is used for sending and receiving messages
 type SphinxClient struct {
-	keysmap    map[[16]byte][][]byte
-	pki        SphinxPKI
-	params     *Params
-	randReader io.Reader
-	id         []byte
+	id               []byte
+	keysmap          map[[16]byte][][]byte
+	pki              SphinxPKI
+	randReader       io.Reader
+	blockCipher      BlockCipher
+	mixHeaderFactory *MixHeaderFactory
 }
 
 // NewSphinxClient creates a new SphinxClient
-func NewSphinxClient(pki SphinxPKI, randReader io.Reader, id []byte) *SphinxClient {
+func NewSphinxClient(pki SphinxPKI, id []byte) *SphinxClient {
 	var newID [4]byte
 	if id == nil {
-		_, err := randReader.Read(newID[:])
+		_, err := rand.Reader.Read(newID[:])
 		if err != nil {
 		}
 		id = []byte(fmt.Sprintf("Client %x", newID))
 	}
 	return &SphinxClient{
-		id:         id,
-		params:     NewParams(),
-		keysmap:    make(map[[16]byte][][]byte),
-		pki:        pki,
-		randReader: randReader,
+		id:               id,
+		keysmap:          make(map[[16]byte][][]byte),
+		pki:              pki,
+		randReader:       rand.Reader,
+		blockCipher:      NewLionessBlockCipher(),
+		mixHeaderFactory: NewMixHeaderFactory(pki),
 	}
 }
 
 // CreateNym creates a SURB and associates it with a Nym
-func (n *SphinxClient) CreateNym(route [][16]byte) (*ReplyBlock, error) {
+func (c *SphinxClient) CreateNym(route [][16]byte) (*ReplyBlock, error) {
 
 	var messageID [securityParameter]byte
-	_, err := n.randReader.Read(messageID[:])
+	_, err := c.randReader.Read(messageID[:])
 	if err != nil {
 		return nil, fmt.Errorf("create nym failure: %s", err)
 	}
-	encodedClientID := EncodeDestination(n.id[:])
-	header, hopSharedSecrets, err := NewMixHeader(n.params, route, n.pki, encodedClientID, messageID, n.randReader)
+	encodedClientID := EncodeDestination(c.id[:])
+
+	header, hopSharedSecrets, err := c.mixHeaderFactory.BuildHeader(route, encodedClientID, messageID)
 	if err != nil {
 		return nil, fmt.Errorf("create nym failure: %v", err)
 	}
 	var ktilde [32]byte
-	_, err = n.randReader.Read(ktilde[:])
+	_, err = c.randReader.Read(ktilde[:])
 	if err != nil {
 		return nil, fmt.Errorf("create nym failure: %s", err)
 	}
 	keys := [][]byte{}
 	keys = append(keys, ktilde[:])
 	for i := range hopSharedSecrets {
-		key, err := n.params.CreateBlockCipherKey(hopSharedSecrets[i])
+		key, err := c.blockCipher.CreateBlockCipherKey(hopSharedSecrets[i])
 		if err != nil {
 			return nil, fmt.Errorf("create nym failure: %s", err)
 		}
 		keys = append(keys, key[:])
 	}
-	n.keysmap[messageID] = keys
+	c.keysmap[messageID] = keys
 	surb := ReplyBlock{
 		Header:   header,
 		Key:      ktilde,
@@ -320,30 +369,30 @@ func (n *SphinxClient) CreateNym(route [][16]byte) (*ReplyBlock, error) {
 // Decrypt decrypts a reply-message, a message sent to us
 // using a SURB we previously created. The given message ID
 // is used to lookup the correct decryption key.
-func (n *SphinxClient) Decrypt(messageID [securityParameter]byte, payload []byte) ([]byte, error) {
+func (c *SphinxClient) Decrypt(messageID [securityParameter]byte, payload []byte) ([]byte, error) {
 	var err error
-	keys, ok := n.keysmap[messageID]
+	keys, ok := c.keysmap[messageID]
 	if !ok {
 		return nil, fmt.Errorf("key for message id %s not found", messageID)
 	}
 	ktilde := keys[0]
 	keys = keys[1:]
-	delete(n.keysmap, messageID)
+	delete(c.keysmap, messageID)
 	var keyArray [lioness.KeyLen]byte
 	for i := len(keys) - 1; i > -1; i-- {
 		copy(keyArray[:], keys[i])
-		payload, err = n.params.EncryptBlock(keyArray, payload)
+		payload, err = c.blockCipher.Encrypt(keyArray, payload)
 		if err != nil {
 			return nil, fmt.Errorf("client decrypt failure: %v", err)
 		}
 	}
 	var k [32]byte
 	copy(k[:], ktilde)
-	blockCipherKey, err := n.params.CreateBlockCipherKey(k)
+	blockCipherKey, err := c.blockCipher.CreateBlockCipherKey(k)
 	if err != nil {
 		return nil, errors.New("client decrypt failed to derive a block cipher key")
 	}
-	payload, err = n.params.DecryptBlock(blockCipherKey, payload)
+	payload, err = c.blockCipher.Decrypt(blockCipherKey, payload)
 	if err != nil {
 		return nil, fmt.Errorf("client decrypt failure: %v", err)
 	}
@@ -357,4 +406,26 @@ func (n *SphinxClient) Decrypt(messageID [securityParameter]byte, payload []byte
 		return nil, errors.New("failed to unpad payload")
 	}
 	return unpaddedPayload, nil
+}
+
+// WrapReply is used to compose a Single Use Reply Block
+func (c *SphinxClient) WrapReply(surb *ReplyBlock, message []byte) ([]byte, *OnionPacket, error) {
+	key, err := c.blockCipher.CreateBlockCipherKey(surb.Key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("WrapReply failed to create block cipher key: %v", err)
+	}
+	prefixedMessage := make([]byte, securityParameter)
+	prefixedMessage = append(prefixedMessage, message...)
+	paddedPayload, err := AddPadding(prefixedMessage, PayloadSize)
+	if err != nil {
+		return nil, nil, fmt.Errorf("WrapReply failed to add padding: %v", err)
+	}
+	ciphertextPayload, err := c.blockCipher.Encrypt(key, paddedPayload)
+	if err != nil {
+		return nil, nil, fmt.Errorf("WrapReply failed to encrypt payload: %v", err)
+	}
+	var payload [PayloadSize]byte
+	copy(payload[:], ciphertextPayload)
+	onionPacket := NewOnionReply(surb.Header, payload)
+	return surb.FirstHop[:], onionPacket, nil
 }
