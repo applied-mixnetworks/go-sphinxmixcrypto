@@ -132,7 +132,14 @@ func NewMixHeader(params *Params, route [][16]byte, pki SphinxPKI,
 	lioness.XorBytes(beta, beta, cipherStream)
 	beta = append(beta, filler...)
 	gammaKey := params.GenerateHMACKey(hopSharedSecrets[routeLen-1])
-	gamma := params.HMAC(gammaKey, beta)
+	gamma, err := params.HMAC(gammaKey, beta)
+	if err != nil {
+		return nil, nil, fmt.Errorf("HMAC fail: %s", err)
+	}
+
+	if err != nil {
+		return nil, nil, fmt.Errorf("HMAC fail: %s", err)
+	}
 	newBeta := []byte{}
 	prevBeta := beta
 
@@ -150,7 +157,10 @@ func NewMixHeader(params *Params, route [][16]byte, pki SphinxPKI,
 			return nil, nil, fmt.Errorf("stream cipher failure: %s", err)
 		}
 		lioness.XorBytes(newBeta, newBeta, cipherStream)
-		gamma = params.HMAC(params.GenerateHMACKey(hopSharedSecrets[i]), newBeta)
+		gamma, err = params.HMAC(params.GenerateHMACKey(hopSharedSecrets[i]), newBeta)
+		if err != nil {
+			return nil, nil, fmt.Errorf("HMAC fail: %s", err)
+		}
 		prevBeta = newBeta
 	}
 	finalBeta := [routingInfoSize]byte{}

@@ -129,11 +129,15 @@ func (s *Params) GenerateCipherStream(key [chachaKeyLen]byte, numBytes uint) ([]
 }
 
 // HMAC authenticates our message.
-func (s *Params) HMAC(key [16]byte, data []byte) (ret [16]byte) {
+func (s *Params) HMAC(key [16]byte, data []byte) ([16]byte, error) {
+	var ret [16]byte
 	h := blake2b.NewMAC(16, key[:])
-	_, _ = h.Write(data)
+	_, err := h.Write(data)
+	if err != nil {
+		return ret, err
+	}
 	copy(ret[:], h.Sum(nil))
-	return
+	return ret, nil
 }
 
 // EncryptBlock encrypts a block

@@ -149,7 +149,11 @@ func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
 	}
 	n.RUnlock()
 
-	mac := n.params.HMAC(n.params.GenerateHMACKey(sharedSecret), routeInfo[:])
+	mac, err := n.params.HMAC(n.params.GenerateHMACKey(sharedSecret), routeInfo[:])
+	if err != nil {
+		return nil, fmt.Errorf("HMAC fail: %s", err)
+	}
+
 	if !bytes.Equal(headerMac[:], mac[:]) {
 		// invalid MAC
 		return nil, errors.New("invalid mac")
