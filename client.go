@@ -9,7 +9,6 @@ package sphinxmixcrypto
 
 import (
 	"bytes"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -75,14 +74,14 @@ type MixHeaderFactory struct {
 }
 
 // NewMixHeaderFactory creates a new mix header factory
-func NewMixHeaderFactory(pki SphinxPKI) *MixHeaderFactory {
+func NewMixHeaderFactory(pki SphinxPKI, randReader io.Reader) *MixHeaderFactory {
 	factory := MixHeaderFactory{
 		group:        NewGroupCurve25519(),
 		blockCipher:  NewLionessBlockCipher(),
 		streamCipher: &Chacha20Stream{},
 		digest:       NewBlake2bDigest(),
 		pki:          pki,
-		randReader:   rand.Reader,
+		randReader:   randReader,
 	}
 	return &factory
 }
@@ -104,7 +103,6 @@ func (f *MixHeaderFactory) BuildHeader(route [][16]byte, destination []byte, mes
 	}
 
 	paddingLen := (2*(NumMaxHops-routeLen)+2)*securityParameter - len(destination)
-	// minus 1 for one byte destination type marker
 	padding := make([]byte, paddingLen)
 	_, err = f.randReader.Read(padding)
 	if err != nil {
@@ -227,13 +225,13 @@ type OnionPacketFactory struct {
 }
 
 // NewOnionPacketFactory creates a new onion packet factory
-func NewOnionPacketFactory(pki SphinxPKI) *OnionPacketFactory {
+func NewOnionPacketFactory(pki SphinxPKI, randReader io.Reader) *OnionPacketFactory {
 	factory := OnionPacketFactory{
 		group:            NewGroupCurve25519(),
 		blockCipher:      NewLionessBlockCipher(),
 		pki:              pki,
-		randReader:       rand.Reader,
-		mixHeaderFactory: NewMixHeaderFactory(pki),
+		randReader:       randReader,
+		mixHeaderFactory: NewMixHeaderFactory(pki, randReader),
 	}
 	return &factory
 }
@@ -311,10 +309,10 @@ type SphinxClient struct {
 }
 
 // NewSphinxClient creates a new SphinxClient
-func NewSphinxClient(pki SphinxPKI, id []byte) *SphinxClient {
+func NewSphinxClient(pki SphinxPKI, id []byte, randReader io.Reader) *SphinxClient {
 	var newID [4]byte
 	if id == nil {
-		_, err := rand.Reader.Read(newID[:])
+		_, err := randReader.Read(newID[:])
 		if err != nil {
 		}
 		id = []byte(fmt.Sprintf("Client %x", newID))
@@ -323,9 +321,9 @@ func NewSphinxClient(pki SphinxPKI, id []byte) *SphinxClient {
 		id:               id,
 		keysmap:          make(map[[16]byte][][]byte),
 		pki:              pki,
-		randReader:       rand.Reader,
+		randReader:       randReader,
 		blockCipher:      NewLionessBlockCipher(),
-		mixHeaderFactory: NewMixHeaderFactory(pki),
+		mixHeaderFactory: NewMixHeaderFactory(pki, randReader),
 	}
 }
 
