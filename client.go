@@ -309,11 +309,12 @@ type SphinxClient struct {
 }
 
 // NewSphinxClient creates a new SphinxClient
-func NewSphinxClient(pki SphinxPKI, id []byte, randReader io.Reader) *SphinxClient {
+func NewSphinxClient(pki SphinxPKI, id []byte, randReader io.Reader) (*SphinxClient, error) {
 	var newID [4]byte
 	if id == nil {
 		_, err := randReader.Read(newID[:])
 		if err != nil {
+			return nil, err
 		}
 		id = []byte(fmt.Sprintf("Client %x", newID))
 	}
@@ -324,7 +325,7 @@ func NewSphinxClient(pki SphinxPKI, id []byte, randReader io.Reader) *SphinxClie
 		randReader:       randReader,
 		blockCipher:      NewLionessBlockCipher(),
 		mixHeaderFactory: NewMixHeaderFactory(pki, randReader),
-	}
+	}, nil
 }
 
 // CreateNym creates a SURB and associates it with a Nym

@@ -307,7 +307,10 @@ func TestSURB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFixedNoiseReader fail: %v", err)
 	}
-	client := NewSphinxClient(pki, nil, randReader)
+	client, err := NewSphinxClient(pki, nil, randReader)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
 	surb, err := client.CreateNym(route)
 	if err != nil {
 		t.Fatalf("failed to create SURB: %v", err)
