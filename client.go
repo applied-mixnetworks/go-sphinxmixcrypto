@@ -198,25 +198,25 @@ func (f *MixHeaderFactory) BuildHeader(route [][16]byte, destination []byte, mes
 	return header, hopSharedSecrets, nil
 }
 
-// OnionPacket represents a forwarding message containing onion wrapped
+// SphinxPacket represents a forwarding message containing onion wrapped
 // hop-to-hop routing information along with an onion encrypted payload message
 // addressed to the final destination.
-type OnionPacket struct {
+type SphinxPacket struct {
 	Header  *MixHeader
 	Payload [PayloadSize]byte // delta
 }
 
-// NewOnionReply is used to create an OnionPacket with a specified header and payload.
+// NewOnionReply is used to create an SphinxPacket with a specified header and payload.
 // This is used by the WrapReply to create Single Use Reply Blocks
-func NewOnionReply(header *MixHeader, payload [PayloadSize]byte) *OnionPacket {
-	return &OnionPacket{
+func NewOnionReply(header *MixHeader, payload [PayloadSize]byte) *SphinxPacket {
+	return &SphinxPacket{
 		Header:  header,
 		Payload: payload,
 	}
 }
 
-// OnionPacketFactory builds onion packets
-type OnionPacketFactory struct {
+// SphinxPacketFactory builds onion packets
+type SphinxPacketFactory struct {
 	group            *GroupCurve25519
 	blockCipher      BlockCipher
 	pki              SphinxPKI
@@ -224,9 +224,9 @@ type OnionPacketFactory struct {
 	mixHeaderFactory *MixHeaderFactory
 }
 
-// NewOnionPacketFactory creates a new onion packet factory
-func NewOnionPacketFactory(pki SphinxPKI, randReader io.Reader) *OnionPacketFactory {
-	factory := OnionPacketFactory{
+// NewSphinxPacketFactory creates a new onion packet factory
+func NewSphinxPacketFactory(pki SphinxPKI, randReader io.Reader) *SphinxPacketFactory {
+	factory := SphinxPacketFactory{
 		group:            NewGroupCurve25519(),
 		blockCipher:      NewLionessBlockCipher(),
 		pki:              pki,
@@ -236,8 +236,8 @@ func NewOnionPacketFactory(pki SphinxPKI, randReader io.Reader) *OnionPacketFact
 	return &factory
 }
 
-// BuildForwardOnionPacket builds a forward oniion packet
-func (f *OnionPacketFactory) BuildForwardOnionPacket(route [][16]byte, destination [16]byte, payload []byte) (*OnionPacket, error) {
+// BuildForwardSphinxPacket builds a forward oniion packet
+func (f *SphinxPacketFactory) BuildForwardSphinxPacket(route [][16]byte, destination [16]byte, payload []byte) (*SphinxPacket, error) {
 
 	if len(payload)+1+len(destination) > PayloadSize-2 { // XXX AddPadding has a 2 byte overhead
 		return nil, fmt.Errorf("wrong sized payload %d > %d", len(payload), PayloadSize)
@@ -282,7 +282,7 @@ func (f *OnionPacketFactory) BuildForwardOnionPacket(route [][16]byte, destinati
 	}
 	newPayload := [PayloadSize]byte{}
 	copy(newPayload[:], delta)
-	return &OnionPacket{
+	return &SphinxPacket{
 		Header:  mixHeader,
 		Payload: newPayload,
 	}, nil
@@ -408,7 +408,7 @@ func (c *SphinxClient) Decrypt(messageID [securityParameter]byte, payload []byte
 }
 
 // WrapReply is used to compose a Single Use Reply Block
-func (c *SphinxClient) WrapReply(surb *ReplyBlock, message []byte) ([]byte, *OnionPacket, error) {
+func (c *SphinxClient) WrapReply(surb *ReplyBlock, message []byte) ([]byte, *SphinxPacket, error) {
 	key, err := c.blockCipher.CreateBlockCipherKey(surb.Key)
 	if err != nil {
 		return nil, nil, fmt.Errorf("WrapReply failed to create block cipher key: %v", err)

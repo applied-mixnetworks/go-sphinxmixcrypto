@@ -14,7 +14,7 @@ import (
 // Encode serializes the raw bytes of the onoin packet into the passed
 // io.Writer. The form encoded within the passed io.Writer is suitable for
 // either storing on disk, or sending over the network.
-func (f *OnionPacket) Encode(w io.Writer) error {
+func (f *SphinxPacket) Encode(w io.Writer) error {
 	ephemeral := f.Header.EphemeralKey
 
 	if _, err := w.Write([]byte{f.Header.Version}); err != nil {
@@ -42,9 +42,9 @@ func (f *OnionPacket) Encode(w io.Writer) error {
 
 // Decode fully populates the target ForwardingMessage from the raw bytes
 // encoded within the io.Reader. In the case of any decoding errors, an error
-// will be returned. If the method successs, then the new OnionPacket is
+// will be returned. If the method successs, then the new SphinxPacket is
 // ready to be processed by an instance of SphinxNode.
-func (f *OnionPacket) Decode(r io.Reader) error {
+func (f *SphinxPacket) Decode(r io.Reader) error {
 	var err error
 
 	f.Header = &MixHeader{}

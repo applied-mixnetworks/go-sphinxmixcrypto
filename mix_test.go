@@ -119,7 +119,7 @@ func generateRoute() (map[[16]byte][32]byte, []*SphinxNode, [][16]byte) {
 	return nodeKeys, nodes, route
 }
 
-func newTestRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
+func newTestRoute(numHops int) ([]*SphinxNode, *SphinxPacket, error) {
 	nodes := make([]*SphinxNode, NumMaxHops)
 	nodeKeys := make(map[[16]byte][32]byte)
 	for i := 0; i < NumMaxHops; i++ {
@@ -152,8 +152,8 @@ func newTestRoute(numHops int) ([]*SphinxNode, *OnionPacket, error) {
 	destination := []byte("dest")
 	copy(destID[:], destination)
 	message := []byte("the quick brown fox")
-	onionPacketFactory := NewOnionPacketFactory(pki, randReader)
-	fwdMsg, err := onionPacketFactory.BuildForwardOnionPacket(route, destID, message)
+	onionPacketFactory := NewSphinxPacketFactory(pki, randReader)
+	fwdMsg, err := onionPacketFactory.BuildForwardSphinxPacket(route, destID, message)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Unable to create forwarding message: %#v", err)
 	}
@@ -199,7 +199,7 @@ func TestSphinxEncodeDecode(t *testing.T) {
 
 	// Now decode the bytes encoded above. Again, this should succeeed
 	// without any errors.
-	newFwdMsg := &OnionPacket{}
+	newFwdMsg := &SphinxPacket{}
 	if err := newFwdMsg.Decode(&b); err != nil {
 		t.Fatalf("unable to decode message: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestSphinxEncodeDecode(t *testing.T) {
 	}
 }
 
-func MixStateMachine(firstHop [16]byte, nodeMap map[[16]byte]*SphinxNode, onionPacket *OnionPacket, expected ExpectedState) (*UnwrappedMessage, error) {
+func MixStateMachine(firstHop [16]byte, nodeMap map[[16]byte]*SphinxNode, onionPacket *SphinxPacket, expected ExpectedState) (*UnwrappedMessage, error) {
 	var err error
 	unwrappedMessage := &UnwrappedMessage{}
 	var hop [16]byte
@@ -234,7 +234,7 @@ func MixStateMachine(firstHop [16]byte, nodeMap map[[16]byte]*SphinxNode, onionP
 			copy(header.EphemeralKey[:], unwrappedMessage.Alpha)
 			copy(header.RoutingInfo[:], unwrappedMessage.Beta)
 			copy(header.HeaderMAC[:], unwrappedMessage.Gamma)
-			onionPacket = &OnionPacket{
+			onionPacket = &SphinxPacket{
 				Header: &header,
 			}
 			copy(onionPacket.Payload[:], unwrappedMessage.Delta)
@@ -358,8 +358,8 @@ func TestVectorsSendMessage(t *testing.T) {
 		t.Fatalf("NewFixedNoiseReader fail: %#v", err)
 	}
 
-	onionPacketFactory := NewOnionPacketFactory(pki, randReader)
-	onionPacket, err := onionPacketFactory.BuildForwardOnionPacket(route, route[len(route)-1], message)
+	onionPacketFactory := NewSphinxPacketFactory(pki, randReader)
+	onionPacket, err := onionPacketFactory.BuildForwardSphinxPacket(route, route[len(route)-1], message)
 	if err != nil {
 		t.Fatalf("Unable to create forwarding message: %#v", err)
 	}
@@ -394,8 +394,8 @@ func BenchmarkUnwrapSphinxPacket(b *testing.B) {
 	if err != nil {
 		b.Fatalf("NewFixedNoiseReader fail: %#v", err)
 	}
-	onionPacketFactory := NewOnionPacketFactory(pki, randReader)
-	fwdMsg, err := onionPacketFactory.BuildForwardOnionPacket(route, route[len(route)-1], message)
+	onionPacketFactory := NewSphinxPacketFactory(pki, randReader)
+	fwdMsg, err := onionPacketFactory.BuildForwardSphinxPacket(route, route[len(route)-1], message)
 	if err != nil {
 		b.Fatalf("Unable to create forwarding message: %#v", err)
 	}
@@ -426,8 +426,8 @@ func BenchmarkComposeSphinxPacket(b *testing.B) {
 			b.Fatalf("unexpected an error: %v", err)
 		}
 		b.StartTimer()
-		onionPacketFactory := NewOnionPacketFactory(pki, randReader)
-		_, err = onionPacketFactory.BuildForwardOnionPacket(route, destID, message)
+		onionPacketFactory := NewSphinxPacketFactory(pki, randReader)
+		_, err = onionPacketFactory.BuildForwardSphinxPacket(route, destID, message)
 		if err != nil {
 			b.Fatalf("unexpected an error: %v", err)
 		}

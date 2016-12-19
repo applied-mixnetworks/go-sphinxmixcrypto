@@ -132,7 +132,7 @@ func (n *SphinxNode) PrefixFreeDecode(s []byte) (int, []byte, []byte) {
 
 // Unwrap unwraps a layer of encryption from a sphinx packet
 // and upon success returns an UnwrappedMessage, otherwise an error.
-func (n *SphinxNode) Unwrap(packet *OnionPacket) (*UnwrappedMessage, error) {
+func (n *SphinxNode) Unwrap(packet *SphinxPacket) (*UnwrappedMessage, error) {
 	result := &UnwrappedMessage{}
 	mixHeader := packet.Header
 	dhKey := mixHeader.EphemeralKey
