@@ -7,6 +7,7 @@
 package sphinxmixcrypto
 
 import (
+	"bytes"
 	"encoding/hex"
 	"testing"
 )
@@ -26,15 +27,23 @@ func TestGroupCurve25519(t *testing.T) {
 	secretArray2 := [32]byte{}
 	copy(secretArray2[:], secretString)
 	sec2 := group.makeSecret(secretArray2)
-
 	if group.ExpOn(group.ExpOn(group.g, sec1), sec2) != group.ExpOn(group.ExpOn(group.g, sec2), sec1) {
 		t.Error("multiplication should be commutative")
 		t.Fail()
 	}
-
 	secretSlice := [][32]byte{sec1, sec2}
 	if group.ExpOn(group.ExpOn(group.g, sec1), sec2) != group.MultiExpOn(group.g, secretSlice) {
 		t.Error("multiplication should be commutative")
+		t.Fail()
+	}
+	result, err := hex.DecodeString("84b87479a6036249a18ef279b73db5a4811f641c50337ae3f21fb0be43cc8040")
+	if err != nil {
+		t.Error(err)
+		t.Fail()
+	}
+	l := group.ExpOn(group.ExpOn(group.g, sec1), sec2)
+	if !bytes.Equal(l[:], result) {
+		t.Error("unexpected result")
 		t.Fail()
 	}
 }
