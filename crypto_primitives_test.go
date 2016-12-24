@@ -7,30 +7,34 @@
 package sphinxmixcrypto
 
 import (
-	"bytes"
 	"encoding/hex"
 	"testing"
 )
 
 func TestGroupCurve25519(t *testing.T) {
 	group := NewGroupCurve25519()
-	secret, err := hex.DecodeString("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b4")
+	secretString, err := hex.DecodeString("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b4")
 	if err != nil {
 		t.Error(err)
 		t.Fail()
 	}
-	secretArray := [32]byte{}
-	copy(secretArray[:], secret)
-	x := group.makeSecret(secretArray)
-	blinds := [][32]byte{x}
-	alpha := group.MultiExpOn(group.g, blinds)
-	want, err := hex.DecodeString("56f7f7946e62a79f2a4440cc5ca459a9d1b080c5972014c782230fa38cfe8277")
-	if err != nil {
-		t.Error(err)
+	secretArray1 := [32]byte{}
+	copy(secretArray1[:], secretString)
+	sec1 := group.makeSecret(secretArray1)
+
+	secretString, err = hex.DecodeString("4171bd9a48a58cf7579e9fa662fe0ac2acb8c6eed3056cd970fd35dd4d026cae")
+	secretArray2 := [32]byte{}
+	copy(secretArray2[:], secretString)
+	sec2 := group.makeSecret(secretArray2)
+
+	if group.ExpOn(group.ExpOn(group.g, sec1), sec2) != group.ExpOn(group.ExpOn(group.g, sec2), sec1) {
+		t.Error("multiplication should be commutative")
 		t.Fail()
 	}
-	if !bytes.Equal(alpha[:], want) {
-		t.Error("MultiExpOn produced unexpected result")
+
+	secretSlice := [][32]byte{sec1, sec2}
+	if group.ExpOn(group.ExpOn(group.g, sec1), sec2) != group.MultiExpOn(group.g, secretSlice) {
+		t.Error("multiplication should be commutative")
 		t.Fail()
 	}
 }
