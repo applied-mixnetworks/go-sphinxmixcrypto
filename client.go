@@ -155,7 +155,10 @@ func (f *MixHeaderFactory) BuildHeader(route [][16]byte, destination []byte, mes
 	}
 	lioness.XorBytes(beta, beta, cipherStream)
 	beta = append(beta, filler...)
-	gammaKey := f.digest.DeriveHMACKey(hopSharedSecrets[routeLen-1])
+	gammaKey, err := f.digest.DeriveHMACKey(hopSharedSecrets[routeLen-1])
+	if err != nil {
+		return nil, nil, fmt.Errorf("HMAC key derivation fail: %s", err)
+	}
 	gamma, err := f.digest.HMAC(gammaKey, beta)
 	if err != nil {
 		return nil, nil, fmt.Errorf("HMAC fail: %s", err)
@@ -181,7 +184,11 @@ func (f *MixHeaderFactory) BuildHeader(route [][16]byte, destination []byte, mes
 			return nil, nil, fmt.Errorf("stream cipher failure: %s", err)
 		}
 		lioness.XorBytes(newBeta, newBeta, cipherStream)
-		gamma, err = f.digest.HMAC(f.digest.DeriveHMACKey(hopSharedSecrets[i]), newBeta)
+		key, err := f.digest.DeriveHMACKey(hopSharedSecrets[i])
+		if err != nil {
+			return nil, nil, fmt.Errorf("HMAC key derivation fail: %s", err)
+		}
+		gamma, err = f.digest.HMAC(key, newBeta)
 		if err != nil {
 			return nil, nil, fmt.Errorf("HMAC fail: %s", err)
 		}

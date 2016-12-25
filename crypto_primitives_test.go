@@ -47,3 +47,48 @@ func TestGroupCurve25519(t *testing.T) {
 		t.Fail()
 	}
 }
+
+func TestHMAC(t *testing.T) {
+	digest := NewBlake2bDigest()
+	secret, err := hex.DecodeString("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b4")
+	if err != nil {
+		t.Error(err)
+		t.Fail()
+	}
+	var secretArray [32]byte
+	copy(secretArray[:], secret)
+	key, err := digest.DeriveHMACKey(secretArray)
+	if err != nil {
+		t.Error(err)
+		t.Fail()
+	}
+	wantKey, err := hex.DecodeString("eba2ad216a65c5230ad2018b4c536c45")
+	if err != nil {
+		t.Error(err)
+		t.Fail()
+	}
+	if !bytes.Equal(key[:], wantKey) {
+		t.Error(err)
+		t.Fail()
+	}
+
+	data, err := hex.DecodeString("4171bd9a48a58cf7579e9fa662fe0ac2acb8c6eed3056cd970fd35dd4d026cae")
+	if err != nil {
+		t.Error(err)
+		t.Fail()
+	}
+	mac, err := digest.HMAC(key, data)
+	if err != nil {
+		t.Error(err)
+		t.Fail()
+	}
+	wantMac, err := hex.DecodeString("77724528a77692be295f07bcfc8bd5eb")
+	if err != nil {
+		t.Error(err)
+		t.Fail()
+	}
+	if !bytes.Equal(mac[:], wantMac) {
+		t.Error(err)
+		t.Fail()
+	}
+}

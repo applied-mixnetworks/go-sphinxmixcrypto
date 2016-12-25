@@ -47,7 +47,7 @@ type StreamCipher interface {
 type Digest interface {
 	HMAC(key [securityParameter]byte, data []byte) ([securityParameter]byte, error)
 	Hash(data []byte) [32]byte
-	DeriveHMACKey(secret [32]byte) [16]byte
+	DeriveHMACKey(secret [32]byte) ([16]byte, error)
 	DeriveStreamCipherKey(secret [32]byte) [32]byte
 	HashReplay(secret [32]byte) [32]byte
 	HashBlindingFactor(alpha [32]byte, secret [32]byte) [32]byte
@@ -140,14 +140,22 @@ func (b *Blake2bDigest) Hash(data []byte) [32]byte {
 }
 
 // DeriveHMACKey derives a key to be used with an HMAC
-func (b *Blake2bDigest) DeriveHMACKey(secret [32]byte) [16]byte {
-	h := []byte{}
-	h = append(h, hashMuPrefix)
-	h = append(h, secret[:]...)
-	hash := b.Hash(h)
+func (b *Blake2bDigest) DeriveHMACKey(secret [32]byte) ([16]byte, error) {
 	var ret [16]byte
-	copy(ret[:], hash[0:16])
-	return ret
+	digest, err := blake2b.New(&blake2b.Config{Size: 16})
+	if err != nil {
+		return ret, err
+	}
+	_, err = digest.Write([]byte{hashMuPrefix})
+	if err != nil {
+		return ret, err
+	}
+	_, err = digest.Write(secret[:])
+	if err != nil {
+		return ret, err
+	}
+	copy(ret[:], digest.Sum(nil))
+	return ret, nil
 }
 
 // DeriveStreamCipherKey derives a key to be used with a stream cipher

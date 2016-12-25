@@ -151,7 +151,11 @@ func (n *SphinxNode) Unwrap(packet *SphinxPacket) (*UnwrappedMessage, error) {
 	}
 	n.RUnlock()
 
-	mac, err := n.digest.HMAC(n.digest.DeriveHMACKey(sharedSecret), routeInfo[:])
+	key, err := n.digest.DeriveHMACKey(sharedSecret)
+	if err != nil {
+		return nil, fmt.Errorf("HMAC key derivation fail: %s", err)
+	}
+	mac, err := n.digest.HMAC(key, routeInfo[:])
 	if err != nil {
 		return nil, fmt.Errorf("HMAC fail: %s", err)
 	}
