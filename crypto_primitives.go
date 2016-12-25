@@ -170,14 +170,6 @@ func (b *Blake2bDigest) HMAC(key [securityParameter]byte, data []byte) ([securit
 	return ret, nil
 }
 
-// HashStreamCipherKey is prefix hash used to derive a stream cipher key
-func (b *Blake2bDigest) HashStreamCipherKey(secret [32]byte) [32]byte {
-	h := []byte{}
-	h = append(h, hashRhoPrefix)
-	h = append(h, secret[:]...)
-	return blake2b.Sum256(h)
-}
-
 // HashBlindingFactor is used to hash the blinding factory
 func (b *Blake2bDigest) HashBlindingFactor(alpha [32]byte, secret [32]byte) [32]byte {
 	h := []byte{}
