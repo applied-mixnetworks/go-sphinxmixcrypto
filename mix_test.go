@@ -139,11 +139,12 @@ func newTestRoute(numHops int) ([]*SphinxNode, *SphinxPacket, error) {
 	route := make([][16]byte, len(nodes))
 	for i := 0; i < len(nodes); i++ {
 		route[i] = nodes[i].id
-		//fmt.Printf("node id %x\n", nodes[i].id)
 	}
 
 	// Generate a forwarding message to route to the final node via the
 	// generated intermediate nodes above.
+
+	// this fake entropy source makes this test deterministic
 	randReader, err := NewFixedNoiseReader("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b43c78e065c89b26bc7b498dd6c0f24925c67a7ac0d4a191937bc7698f650391")
 	if err != nil {
 		return nil, nil, fmt.Errorf("NewFixedNoiseReader fail: %#v", err)
@@ -153,8 +154,11 @@ func newTestRoute(numHops int) ([]*SphinxNode, *SphinxPacket, error) {
 	destination := []byte("dest")
 	copy(destID[:], destination)
 	message := []byte("the quick brown fox")
-	params := NewSphinxParams(5, 1024)
-	onionPacketFactory := NewSphinxPacketFactory(params, pki, randReader)
+	params := SphinxParams{
+		MaxHops:     5,
+		PayloadSize: 1024,
+	}
+	onionPacketFactory := NewSphinxPacketFactory(&params, pki, randReader)
 	fwdMsg, err := onionPacketFactory.BuildForwardSphinxPacket(route, destID, message)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Unable to create forwarding message: %#v", err)
@@ -170,14 +174,17 @@ func TestSphinxNodeReplay(t *testing.T) {
 		nodeMap[nodes[i].id] = nodes[i]
 	}
 	pki := NewDummyPKI(nodeKeys)
+	// this fake entropy source makes this test deterministic
 	randReader, err := NewFixedNoiseReader("b5451d2eb2faf3f84bc4778ace6516e73e9da6c597e6f96f7e63c7ca6c9456018be9fd84883e4469a736c66fcaeceacf080fb06bc45859796707548c356c462594d1418b5349daf8fffe21a67affec10c0a2e3639c5bd9e8a9ddde5caf2e1db802995f54beae23305f2241c6517d301808c0946d5895bfd0d4b53d8ab2760e4ec8d4b2309eec239eedbab2c6ae532da37f3b633e256c6b551ed76321cc1f301d74a0a8a0673ea7e489e984543ca05fe0ff373a6f3ed4eeeaafd18292e3b182c25216aeb8")
 	if err != nil {
 		t.Fatalf("NewFixedNoiseReader fail: %#v", err)
 	}
-	params := NewSphinxParams(5, 1024)
-	packetFactory := NewSphinxPacketFactory(params, pki, randReader)
+	params := SphinxParams{
+		MaxHops:     5,
+		PayloadSize: 1024,
+	}
+	packetFactory := NewSphinxPacketFactory(&params, pki, randReader)
 	message := []byte("the quick brown fox")
-	//fmt.Printf("")
 	fwdMsg, err := packetFactory.BuildForwardSphinxPacket(route, route[len(route)-1], message)
 	if err != nil {
 		t.Fatalf("Unable to create forwarding message: %#v", err)
@@ -317,12 +324,16 @@ func TestSURB(t *testing.T) {
 		nodeMap[nodes[i].id] = nodes[i]
 	}
 	pki := NewDummyPKI(nodeKeys)
+	// this fake entropy source makes this test deterministic
 	randReader, err := NewFixedNoiseReader("b5451d2eb2faf3f84bc4778ace6516e73e9da6c597e6f96f7e63c7ca6c9456018be9fd84883e4469a736c66fcaeceacf080fb06bc45859796707548c356c462594d1418b5349daf8fffe21a67affec10c0a2e3639c5bd9e8a9ddde5caf2e1db802995f54beae23305f2241c6517d301808c0946d5895bfd0d4b53d8ab2760e4ec8d4b2309eec239eedbab2c6ae532da37f3b633e256c6b551ed76321cc1f301d74a0a8a0673ea7e489e984543ca05fe0ff373a6f3ed4eeeaafd18292e3b182c25216aeb8")
 	if err != nil {
 		t.Fatalf("NewFixedNoiseReader fail: %v", err)
 	}
-	params := NewSphinxParams(5, 1024)
-	client, err := NewSphinxClient(params, pki, nil, randReader)
+	params := SphinxParams{
+		MaxHops:     5,
+		PayloadSize: 1024,
+	}
+	client, err := NewSphinxClient(&params, pki, nil, randReader)
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
@@ -368,12 +379,16 @@ func TestVectorsSendMessage(t *testing.T) {
 		nodeMap[nodes[i].id] = nodes[i]
 	}
 	pki := NewDummyPKI(nodeKeys)
+	// this fake entropy source makes this test deterministic
 	randReader, err := NewFixedNoiseReader("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b43c78e065c89b26bc7b498dd6c0f24925c67a7ac0d4a191937bc7698f650391")
 	if err != nil {
 		t.Fatalf("NewFixedNoiseReader fail: %#v", err)
 	}
-	params := NewSphinxParams(5, 1024)
-	onionPacketFactory := NewSphinxPacketFactory(params, pki, randReader)
+	params := SphinxParams{
+		MaxHops:     5,
+		PayloadSize: 1024,
+	}
+	onionPacketFactory := NewSphinxPacketFactory(&params, pki, randReader)
 	onionPacket, err := onionPacketFactory.BuildForwardSphinxPacket(route, route[len(route)-1], message)
 	if err != nil {
 		t.Fatalf("Unable to create forwarding message: %#v", err)
@@ -405,12 +420,16 @@ func BenchmarkUnwrapSphinxPacket(b *testing.B) {
 		nodeMap[nodes[i].id] = nodes[i]
 	}
 	pki := NewDummyPKI(nodeKeys)
+	// this fake entropy source makes this test deterministic
 	randReader, err := NewFixedNoiseReader("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b43c78e065c89b26bc7b498dd6c0f24925c67a7ac0d4a191937bc7698f650391")
 	if err != nil {
 		b.Fatalf("NewFixedNoiseReader fail: %#v", err)
 	}
-	params := NewSphinxParams(5, 1024)
-	onionPacketFactory := NewSphinxPacketFactory(params, pki, randReader)
+	params := SphinxParams{
+		MaxHops:     5,
+		PayloadSize: 1024,
+	}
+	onionPacketFactory := NewSphinxPacketFactory(&params, pki, randReader)
 	fwdMsg, err := onionPacketFactory.BuildForwardSphinxPacket(route, route[len(route)-1], message)
 	if err != nil {
 		b.Fatalf("Unable to create forwarding message: %#v", err)
@@ -437,13 +456,17 @@ func BenchmarkComposeSphinxPacket(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
+		// this fake entropy source makes this test deterministic
 		randReader, err := NewFixedNoiseReader("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b43c78e065c89b26bc7b498dd6c0f24925c67a7ac0d4a191937bc7698f650391")
 		if err != nil {
 			b.Fatalf("unexpected an error: %v", err)
 		}
 		b.StartTimer()
-		params := NewSphinxParams(5, 1024)
-		onionPacketFactory := NewSphinxPacketFactory(params, pki, randReader)
+		params := SphinxParams{
+			MaxHops:     5,
+			PayloadSize: 1024,
+		}
+		onionPacketFactory := NewSphinxPacketFactory(&params, pki, randReader)
 		_, err = onionPacketFactory.BuildForwardSphinxPacket(route, destID, message)
 		if err != nil {
 			b.Fatalf("unexpected an error: %v", err)
