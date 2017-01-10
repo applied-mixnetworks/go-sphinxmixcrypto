@@ -85,7 +85,7 @@ func NewLionessBlockCipher() *LionessBlockCipher {
 
 // Decrypt decrypts a block of data with the given key.
 func (l *LionessBlockCipher) Decrypt(key [lioness.KeyLen]byte, block []byte) ([]byte, error) {
-	cipher, err := lioness.NewCipher(key, PayloadSize)
+	cipher, err := lioness.NewCipher(key, len(block))
 	if err != nil {
 		return nil, err
 	}

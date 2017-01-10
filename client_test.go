@@ -17,8 +17,9 @@ func TestBuildHeaderErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal("unexpected NewFixedNoiseReader err")
 	}
-	headerFactory := NewMixHeaderFactory(pki, randReader)
-	badRoute := make([][16]byte, NumMaxHops+1)
+	params := NewSphinxParams(5, 1024)
+	headerFactory := NewMixHeaderFactory(params, pki, randReader)
+	badRoute := make([][16]byte, params.MaxHops+1)
 	var messageID [16]byte
 	_, _, err = headerFactory.BuildHeader(badRoute, route[len(route)-1][:], messageID)
 	if err == nil {
@@ -34,7 +35,7 @@ func TestBuildHeaderErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal("unexpected NewFixedNoiseReader err")
 	}
-	headerFactory = NewMixHeaderFactory(pki, randReader)
+	headerFactory = NewMixHeaderFactory(params, pki, randReader)
 	_, _, err = headerFactory.BuildHeader(route, route[len(route)-1][:], messageID)
 	if err == nil {
 		t.Fatal("expected headerFactory error")
@@ -45,7 +46,7 @@ func TestBuildHeaderErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal("unexpected NewFixedNoiseReader err")
 	}
-	headerFactory = NewMixHeaderFactory(pki, randReader)
+	headerFactory = NewMixHeaderFactory(params, pki, randReader)
 	var fakeDest [16]byte
 	route[0] = fakeDest
 	_, _, err = headerFactory.BuildHeader(route, fakeDest[:], messageID)

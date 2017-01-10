@@ -88,7 +88,7 @@ var nodeHexOptions = []HexedNodeOptions{
 }
 
 func generateRoute() (map[[16]byte][32]byte, []*SphinxNode, [][16]byte) {
-	nodes := make([]*SphinxNode, NumMaxHops)
+	nodes := make([]*SphinxNode, 5) // 5 is max hops
 	nodeKeys := make(map[[16]byte][32]byte)
 	for i := range nodeHexOptions {
 		nodeID, err := hex.DecodeString(nodeHexOptions[i].id)
@@ -120,9 +120,9 @@ func generateRoute() (map[[16]byte][32]byte, []*SphinxNode, [][16]byte) {
 }
 
 func newTestRoute(numHops int) ([]*SphinxNode, *SphinxPacket, error) {
-	nodes := make([]*SphinxNode, NumMaxHops)
+	nodes := make([]*SphinxNode, numHops)
 	nodeKeys := make(map[[16]byte][32]byte)
-	for i := 0; i < NumMaxHops; i++ {
+	for i := 0; i < numHops; i++ {
 		options, err := NewSphinxNodeOptions()
 		if err != nil {
 			return nil, nil, err
@@ -139,6 +139,7 @@ func newTestRoute(numHops int) ([]*SphinxNode, *SphinxPacket, error) {
 	route := make([][16]byte, len(nodes))
 	for i := 0; i < len(nodes); i++ {
 		route[i] = nodes[i].id
+		//fmt.Printf("node id %x\n", nodes[i].id)
 	}
 
 	// Generate a forwarding message to route to the final node via the
@@ -152,7 +153,8 @@ func newTestRoute(numHops int) ([]*SphinxNode, *SphinxPacket, error) {
 	destination := []byte("dest")
 	copy(destID[:], destination)
 	message := []byte("the quick brown fox")
-	onionPacketFactory := NewSphinxPacketFactory(pki, randReader)
+	params := NewSphinxParams(5, 1024)
+	onionPacketFactory := NewSphinxPacketFactory(params, pki, randReader)
 	fwdMsg, err := onionPacketFactory.BuildForwardSphinxPacket(route, destID, message)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Unable to create forwarding message: %#v", err)
@@ -162,11 +164,23 @@ func newTestRoute(numHops int) ([]*SphinxNode, *SphinxPacket, error) {
 }
 
 func TestSphinxNodeReplay(t *testing.T) {
-	// We'd like to ensure that the sphinx node itself rejects all replayed
-	// packets which share the same shared secret.
-	nodes, fwdMsg, err := newTestRoute(NumMaxHops)
+	nodeKeys, nodes, route := generateRoute()
+	nodeMap := make(map[[16]byte]*SphinxNode)
+	for i := range nodes {
+		nodeMap[nodes[i].id] = nodes[i]
+	}
+	pki := NewDummyPKI(nodeKeys)
+	randReader, err := NewFixedNoiseReader("b5451d2eb2faf3f84bc4778ace6516e73e9da6c597e6f96f7e63c7ca6c9456018be9fd84883e4469a736c66fcaeceacf080fb06bc45859796707548c356c462594d1418b5349daf8fffe21a67affec10c0a2e3639c5bd9e8a9ddde5caf2e1db802995f54beae23305f2241c6517d301808c0946d5895bfd0d4b53d8ab2760e4ec8d4b2309eec239eedbab2c6ae532da37f3b633e256c6b551ed76321cc1f301d74a0a8a0673ea7e489e984543ca05fe0ff373a6f3ed4eeeaafd18292e3b182c25216aeb8")
 	if err != nil {
-		t.Fatalf("unable to create test route: %v", err)
+		t.Fatalf("NewFixedNoiseReader fail: %#v", err)
+	}
+	params := NewSphinxParams(5, 1024)
+	packetFactory := NewSphinxPacketFactory(params, pki, randReader)
+	message := []byte("the quick brown fox")
+	//fmt.Printf("")
+	fwdMsg, err := packetFactory.BuildForwardSphinxPacket(route, route[len(route)-1], message)
+	if err != nil {
+		t.Fatalf("Unable to create forwarding message: %#v", err)
 	}
 
 	// Allow the node to process the initial packet, this should proceed
@@ -307,7 +321,8 @@ func TestSURB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFixedNoiseReader fail: %v", err)
 	}
-	client, err := NewSphinxClient(pki, nil, randReader)
+	params := NewSphinxParams(5, 1024)
+	client, err := NewSphinxClient(params, pki, nil, randReader)
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
@@ -357,8 +372,8 @@ func TestVectorsSendMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFixedNoiseReader fail: %#v", err)
 	}
-
-	onionPacketFactory := NewSphinxPacketFactory(pki, randReader)
+	params := NewSphinxParams(5, 1024)
+	onionPacketFactory := NewSphinxPacketFactory(params, pki, randReader)
 	onionPacket, err := onionPacketFactory.BuildForwardSphinxPacket(route, route[len(route)-1], message)
 	if err != nil {
 		t.Fatalf("Unable to create forwarding message: %#v", err)
@@ -394,7 +409,8 @@ func BenchmarkUnwrapSphinxPacket(b *testing.B) {
 	if err != nil {
 		b.Fatalf("NewFixedNoiseReader fail: %#v", err)
 	}
-	onionPacketFactory := NewSphinxPacketFactory(pki, randReader)
+	params := NewSphinxParams(5, 1024)
+	onionPacketFactory := NewSphinxPacketFactory(params, pki, randReader)
 	fwdMsg, err := onionPacketFactory.BuildForwardSphinxPacket(route, route[len(route)-1], message)
 	if err != nil {
 		b.Fatalf("Unable to create forwarding message: %#v", err)
@@ -426,7 +442,8 @@ func BenchmarkComposeSphinxPacket(b *testing.B) {
 			b.Fatalf("unexpected an error: %v", err)
 		}
 		b.StartTimer()
-		onionPacketFactory := NewSphinxPacketFactory(pki, randReader)
+		params := NewSphinxParams(5, 1024)
+		onionPacketFactory := NewSphinxPacketFactory(params, pki, randReader)
 		_, err = onionPacketFactory.BuildForwardSphinxPacket(route, destID, message)
 		if err != nil {
 			b.Fatalf("unexpected an error: %v", err)

@@ -139,6 +139,8 @@ func (n *SphinxNode) Unwrap(packet *SphinxPacket) (*UnwrappedMessage, error) {
 	routeInfo := mixHeader.RoutingInfo
 	sharedSecret := n.group.ExpOn(dhKey, n.privateKey)
 	headerMac := mixHeader.HeaderMAC
+	fmt.Printf("header mac %x\n", headerMac)
+	fmt.Printf("BETA %x\n", mixHeader.RoutingInfo)
 	payload := packet.Payload
 
 	// Have we seen it already?
@@ -210,6 +212,7 @@ func (n *SphinxNode) Unwrap(packet *SphinxPacket) (*UnwrappedMessage, error) {
 		result.Delta = delta
 		result.NextHop = val
 		result.ProcessAction = MoreHops
+		fmt.Printf("NEW packet alpha %x beta %x gamma %x delta %x\n", result.Alpha, result.Beta, result.Gamma, result.Delta)
 		return result, nil
 	} else if messageType == ExitNode { // process
 		zeros := bytes.Repeat([]byte{0}, securityParameter)

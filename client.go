@@ -16,29 +16,19 @@ import (
 	"github.com/david415/go-lioness"
 )
 
-const (
-	// The number of bytes produced by our CSPRG for the key stream
-	// implementing our stream cipher to encrypt/decrypt the mix header. The
-	// last 2 * securityParameter bytes are only used in order to generate/check
-	// the MAC over the header.
-	numStreamBytes = (2*NumMaxHops + 3) * securityParameter
-
-	// NumMaxHops is the maximum path length.
-	NumMaxHops = 5
-
-	// Fixed size of the the routing info. This consists of a 16
-	// byte address and a 16 byte HMAC for each hop of the route,
-	// the first pair in cleartext and the following pairs
-	// increasingly obfuscated. In case fewer than numMaxHops are
-	// used, then the remainder is padded with null-bytes, also
-	// obfuscated.
-	routingInfoSize = pubKeyLen + (2*NumMaxHops-1)*securityParameter
-
-	// HopPayloadSize is the per-hop payload size in the header
-	HopPayloadSize = 32
+type SphinxParams struct {
 	// PayloadSize is the packet payload size
-	PayloadSize = 1024
-)
+	PayloadSize int
+	// NumMaxHops is the maximum path length.
+	MaxHops int
+}
+
+func NewSphinxParams(maxHops, payloadSize int) *SphinxParams {
+	return &SphinxParams{
+		PayloadSize: payloadSize,
+		MaxHops:     maxHops,
+	}
+}
 
 // MixHeader contains the sphinx header but not the payload.
 // A version number is also included; TODO: make the version
@@ -46,7 +36,7 @@ const (
 type MixHeader struct {
 	Version      byte
 	EphemeralKey [32]byte                // alpha
-	RoutingInfo  [routingInfoSize]byte   // beta
+	RoutingInfo  []byte                  // beta
 	HeaderMAC    [securityParameter]byte // gamma
 }
 
@@ -65,6 +55,7 @@ func EncodeDestination(destination []byte) []byte {
 
 // MixHeaderFactory builds mix headers
 type MixHeaderFactory struct {
+	params       *SphinxParams
 	group        *GroupCurve25519
 	blockCipher  BlockCipher
 	streamCipher StreamCipher
@@ -74,8 +65,9 @@ type MixHeaderFactory struct {
 }
 
 // NewMixHeaderFactory creates a new mix header factory
-func NewMixHeaderFactory(pki SphinxPKI, randReader io.Reader) *MixHeaderFactory {
+func NewMixHeaderFactory(params *SphinxParams, pki SphinxPKI, randReader io.Reader) *MixHeaderFactory {
 	factory := MixHeaderFactory{
+		params:       params,
 		group:        NewGroupCurve25519(),
 		blockCipher:  NewLionessBlockCipher(),
 		streamCipher: &Chacha20Stream{},
@@ -92,8 +84,8 @@ func NewMixHeaderFactory(pki SphinxPKI, randReader io.Reader) *MixHeaderFactory 
 // a slice of 32byte shared secrets for each mix hop.
 func (f *MixHeaderFactory) BuildHeader(route [][16]byte, destination []byte, messageID [16]byte) (*MixHeader, [][32]byte, error) {
 	routeLen := len(route)
-	if routeLen > NumMaxHops {
-		return nil, nil, fmt.Errorf("route length %d exceeds max hops %d", routeLen, NumMaxHops)
+	if routeLen > f.params.MaxHops {
+		return nil, nil, fmt.Errorf("route length %d exceeds max hops %d", routeLen, f.params.MaxHops)
 	}
 	var secretPoint [32]byte
 	var err error
@@ -102,7 +94,7 @@ func (f *MixHeaderFactory) BuildHeader(route [][16]byte, destination []byte, mes
 		return nil, nil, fmt.Errorf("faileed to generate curve25519 secret: %s", err)
 	}
 
-	paddingLen := (2*(NumMaxHops-routeLen)+2)*securityParameter - len(destination)
+	paddingLen := (2*(f.params.MaxHops-routeLen)+2)*securityParameter - len(destination)
 	padding := make([]byte, paddingLen)
 	_, err = f.randReader.Read(padding)
 	if err != nil {
@@ -131,8 +123,9 @@ func (f *MixHeaderFactory) BuildHeader(route [][16]byte, destination []byte, mes
 	// compute the filler strings
 	hopSize := 2 * securityParameter
 	filler := make([]byte, (numHops-1)*hopSize)
+	numStreamBytes := uint((2*f.params.MaxHops + 3) * securityParameter)
 	for i := 1; i < numHops; i++ {
-		min := (2*(NumMaxHops-i) + 3) * securityParameter
+		min := (2*(f.params.MaxHops-i) + 3) * securityParameter
 		streamKey := f.digest.DeriveStreamCipherKey(hopSharedSecrets[i-1])
 		streamBytes, err := f.streamCipher.GenerateStream(streamKey, numStreamBytes)
 		if err != nil {
@@ -147,7 +140,7 @@ func (f *MixHeaderFactory) BuildHeader(route [][16]byte, destination []byte, mes
 	copy(beta[len(destination):], messageID[:])
 	copy(beta[len(destination)+len(messageID):], padding)
 
-	betaLen := uint((2*(NumMaxHops-routeLen) + 3) * securityParameter)
+	betaLen := uint((2*(f.params.MaxHops-routeLen) + 3) * securityParameter)
 	rhoKey := f.digest.DeriveStreamCipherKey(hopSharedSecrets[routeLen-1])
 	cipherStream, err := f.streamCipher.GenerateStream(rhoKey, betaLen)
 	if err != nil {
@@ -175,10 +168,10 @@ func (f *MixHeaderFactory) BuildHeader(route [][16]byte, destination []byte, mes
 		newBeta = []byte{}
 		newBeta = append(newBeta, mixID[:]...)
 		newBeta = append(newBeta, gamma[:]...)
-		betaSlice := uint((2*NumMaxHops - 1) * securityParameter)
+		betaSlice := uint((2*f.params.MaxHops - 1) * securityParameter)
 		newBeta = append(newBeta, prevBeta[:betaSlice]...)
 		rhoKey := f.digest.DeriveStreamCipherKey(hopSharedSecrets[i])
-		streamSlice := uint((2*NumMaxHops + 1) * securityParameter)
+		streamSlice := uint((2*f.params.MaxHops + 1) * securityParameter)
 		cipherStream, err := f.streamCipher.GenerateStream(rhoKey, streamSlice)
 		if err != nil {
 			return nil, nil, fmt.Errorf("stream cipher failure: %s", err)
@@ -194,12 +187,10 @@ func (f *MixHeaderFactory) BuildHeader(route [][16]byte, destination []byte, mes
 		}
 		prevBeta = newBeta
 	}
-	finalBeta := [routingInfoSize]byte{}
-	copy(finalBeta[:], newBeta[:])
 	header := &MixHeader{
 		Version:      0x01,
 		EphemeralKey: hopEphemeralPubKeys[0],
-		RoutingInfo:  finalBeta,
+		RoutingInfo:  newBeta,
 		HeaderMAC:    gamma,
 	}
 	return header, hopSharedSecrets, nil
@@ -210,12 +201,12 @@ func (f *MixHeaderFactory) BuildHeader(route [][16]byte, destination []byte, mes
 // addressed to the final destination.
 type SphinxPacket struct {
 	Header  *MixHeader
-	Payload [PayloadSize]byte // delta
+	Payload []byte // delta
 }
 
 // NewOnionReply is used to create an SphinxPacket with a specified header and payload.
 // This is used by the WrapReply to create Single Use Reply Blocks
-func NewOnionReply(header *MixHeader, payload [PayloadSize]byte) *SphinxPacket {
+func NewOnionReply(header *MixHeader, payload []byte) *SphinxPacket {
 	return &SphinxPacket{
 		Header:  header,
 		Payload: payload,
@@ -224,6 +215,7 @@ func NewOnionReply(header *MixHeader, payload [PayloadSize]byte) *SphinxPacket {
 
 // SphinxPacketFactory builds onion packets
 type SphinxPacketFactory struct {
+	params           *SphinxParams
 	group            *GroupCurve25519
 	blockCipher      BlockCipher
 	pki              SphinxPKI
@@ -232,13 +224,14 @@ type SphinxPacketFactory struct {
 }
 
 // NewSphinxPacketFactory creates a new onion packet factory
-func NewSphinxPacketFactory(pki SphinxPKI, randReader io.Reader) *SphinxPacketFactory {
+func NewSphinxPacketFactory(params *SphinxParams, pki SphinxPKI, randReader io.Reader) *SphinxPacketFactory {
 	factory := SphinxPacketFactory{
+		params:           params,
 		group:            NewGroupCurve25519(),
 		blockCipher:      NewLionessBlockCipher(),
 		pki:              pki,
 		randReader:       randReader,
-		mixHeaderFactory: NewMixHeaderFactory(pki, randReader),
+		mixHeaderFactory: NewMixHeaderFactory(params, pki, randReader),
 	}
 	return &factory
 }
@@ -246,15 +239,16 @@ func NewSphinxPacketFactory(pki SphinxPKI, randReader io.Reader) *SphinxPacketFa
 // BuildForwardSphinxPacket builds a forward oniion packet
 func (f *SphinxPacketFactory) BuildForwardSphinxPacket(route [][16]byte, destination [16]byte, payload []byte) (*SphinxPacket, error) {
 
-	if len(payload)+1+len(destination) > PayloadSize-2 { // XXX AddPadding has a 2 byte overhead
-		return nil, fmt.Errorf("wrong sized payload %d > %d", len(payload), PayloadSize)
+	// AddPadding has a 2 byte overhead
+	if len(payload)+1+len(destination) > f.params.PayloadSize-2 {
+		return nil, fmt.Errorf("wrong sized payload %d > %d", len(payload), f.params.PayloadSize)
 	}
 	addrPayload := []byte{}
 	addrPayload = append(addrPayload, bytes.Repeat([]byte{0}, 16)...)
 	encodedDest := EncodeDestination(destination[:])
 	addrPayload = append(addrPayload, encodedDest...)
 	addrPayload = append(addrPayload, payload[:]...)
-	paddedPayload, err := AddPadding(addrPayload, PayloadSize)
+	paddedPayload, err := AddPadding(addrPayload, f.params.PayloadSize)
 	if err != nil {
 		return nil, err
 	}
@@ -287,11 +281,9 @@ func (f *SphinxPacketFactory) BuildForwardSphinxPacket(route [][16]byte, destina
 			return nil, err
 		}
 	}
-	newPayload := [PayloadSize]byte{}
-	copy(newPayload[:], delta)
 	return &SphinxPacket{
 		Header:  mixHeader,
-		Payload: newPayload,
+		Payload: delta,
 	}, nil
 }
 
@@ -307,6 +299,7 @@ type ReplyBlock struct {
 
 // SphinxClient is used for sending and receiving messages
 type SphinxClient struct {
+	params           *SphinxParams
 	id               []byte
 	keysmap          map[[16]byte][][]byte
 	pki              SphinxPKI
@@ -316,7 +309,7 @@ type SphinxClient struct {
 }
 
 // NewSphinxClient creates a new SphinxClient
-func NewSphinxClient(pki SphinxPKI, id []byte, randReader io.Reader) (*SphinxClient, error) {
+func NewSphinxClient(params *SphinxParams, pki SphinxPKI, id []byte, randReader io.Reader) (*SphinxClient, error) {
 	var newID [4]byte
 	if id == nil {
 		_, err := randReader.Read(newID[:])
@@ -326,12 +319,13 @@ func NewSphinxClient(pki SphinxPKI, id []byte, randReader io.Reader) (*SphinxCli
 		id = []byte(fmt.Sprintf("Client %x", newID))
 	}
 	return &SphinxClient{
+		params:           params,
 		id:               id,
 		keysmap:          make(map[[16]byte][][]byte),
 		pki:              pki,
 		randReader:       randReader,
 		blockCipher:      NewLionessBlockCipher(),
-		mixHeaderFactory: NewMixHeaderFactory(pki, randReader),
+		mixHeaderFactory: NewMixHeaderFactory(params, pki, randReader),
 	}, nil
 }
 
@@ -422,7 +416,7 @@ func (c *SphinxClient) WrapReply(surb *ReplyBlock, message []byte) ([]byte, *Sph
 	}
 	prefixedMessage := make([]byte, securityParameter)
 	prefixedMessage = append(prefixedMessage, message...)
-	paddedPayload, err := AddPadding(prefixedMessage, PayloadSize)
+	paddedPayload, err := AddPadding(prefixedMessage, c.params.PayloadSize)
 	if err != nil {
 		return nil, nil, fmt.Errorf("WrapReply failed to add padding: %v", err)
 	}
@@ -430,8 +424,6 @@ func (c *SphinxClient) WrapReply(surb *ReplyBlock, message []byte) ([]byte, *Sph
 	if err != nil {
 		return nil, nil, fmt.Errorf("WrapReply failed to encrypt payload: %v", err)
 	}
-	var payload [PayloadSize]byte
-	copy(payload[:], ciphertextPayload)
-	onionPacket := NewOnionReply(surb.Header, payload)
-	return surb.FirstHop[:], onionPacket, nil
+	sphinxPacket := NewOnionReply(surb.Header, ciphertextPayload)
+	return surb.FirstHop[:], sphinxPacket, nil
 }
