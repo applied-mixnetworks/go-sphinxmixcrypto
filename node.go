@@ -37,11 +37,14 @@ const (
 
 // UnwrappedMessage is produced by SphinxNode's Unwrap method
 type UnwrappedMessage struct {
-	ProcessAction             int
-	Alpha, Beta, Gamma, Delta []byte
-	NextHop                   []byte
-	ClientID                  []byte
-	MessageID                 []byte
+	ProcessAction int
+	Alpha         []byte
+	Beta          []byte
+	Gamma         []byte
+	Delta         []byte
+	NextHop       []byte
+	ClientID      []byte
+	MessageID     []byte
 }
 
 // SphinxNodeOptions are node state options such as pub/priv key and an ID
@@ -86,6 +89,7 @@ func idEncode(idnum uint32) [16]byte {
 // SphinxNode is used to keep track of a mix node's state
 type SphinxNode struct {
 	sync.RWMutex
+	params       *SphinxParams
 	pki          SphinxPKI
 	group        *GroupCurve25519
 	privateKey   [32]byte
@@ -98,8 +102,9 @@ type SphinxNode struct {
 }
 
 // NewSphinxNode creates a new SphinxNode
-func NewSphinxNode(options *SphinxNodeOptions) *SphinxNode {
+func NewSphinxNode(options *SphinxNodeOptions, params *SphinxParams) *SphinxNode {
 	n := SphinxNode{
+		params:       params,
 		group:        NewGroupCurve25519(),
 		seenSecrets:  make(map[[32]byte]bool),
 		digest:       NewBlake2bDigest(),
@@ -139,8 +144,6 @@ func (n *SphinxNode) Unwrap(packet *SphinxPacket) (*UnwrappedMessage, error) {
 	routeInfo := mixHeader.RoutingInfo
 	sharedSecret := n.group.ExpOn(dhKey, n.privateKey)
 	headerMac := mixHeader.HeaderMAC
-	fmt.Printf("header mac %x\n", headerMac)
-	fmt.Printf("BETA %x\n", mixHeader.RoutingInfo)
 	payload := packet.Payload
 
 	// Have we seen it already?
@@ -157,7 +160,7 @@ func (n *SphinxNode) Unwrap(packet *SphinxPacket) (*UnwrappedMessage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("HMAC key derivation fail: %s", err)
 	}
-	mac, err := n.digest.HMAC(key, routeInfo[:])
+	mac, err := n.digest.HMAC(key, routeInfo)
 	if err != nil {
 		return nil, fmt.Errorf("HMAC fail: %s", err)
 	}
@@ -185,17 +188,18 @@ func (n *SphinxNode) Unwrap(packet *SphinxPacket) (*UnwrappedMessage, error) {
 	}
 	B := make([]byte, cipherStreamSize)
 	padding := make([]byte, 2*securityParameter)
-	lioness.XorBytes(B, append(routeInfo[:], padding...), cipherStream)
+	lioness.XorBytes(B, append(routeInfo, padding...), cipherStream)
 
 	deltaKey, err := n.blockCipher.CreateBlockCipherKey(sharedSecret)
 	if err != nil {
 		return nil, fmt.Errorf("createBlockCipherKey failure: %s", err)
 	}
-	delta, err := n.blockCipher.Decrypt(deltaKey, payload[:])
+	delta, err := n.blockCipher.Decrypt(deltaKey, payload)
 	if err != nil {
-		return nil, fmt.Errorf("wide block cipher decryption failure: %s", err)
+		return nil, fmt.Errorf("123 wide block cipher decryption failure: %s", err)
 	}
 
+	betaLen := uint((2*n.params.MaxHops + 1) * securityParameter)
 	messageType, val, rest := n.PrefixFreeDecode(B)
 
 	if messageType == MoreHops { // next hop
@@ -207,12 +211,12 @@ func (n *SphinxNode) Unwrap(packet *SphinxPacket) (*UnwrappedMessage, error) {
 		beta := B[securityParameter*2:]
 		// send to next node in the route
 		result.Alpha = alpha[:]
-		result.Beta = beta
+		result.Beta = make([]byte, betaLen)
+		copy(result.Beta, beta)
 		result.Gamma = gamma
 		result.Delta = delta
 		result.NextHop = val
 		result.ProcessAction = MoreHops
-		fmt.Printf("NEW packet alpha %x beta %x gamma %x delta %x\n", result.Alpha, result.Beta, result.Gamma, result.Delta)
 		return result, nil
 	} else if messageType == ExitNode { // process
 		zeros := bytes.Repeat([]byte{0}, securityParameter)

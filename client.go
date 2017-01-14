@@ -133,7 +133,7 @@ func (f *MixHeaderFactory) BuildHeader(route [][16]byte, destination []byte, mes
 	copy(beta[len(destination):], messageID[:])
 	copy(beta[len(destination)+len(messageID):], padding)
 
-	betaLen := uint((2*(f.params.MaxHops-routeLen) + 3) * securityParameter)
+	betaLen := uint((2*routeLen + 1) * securityParameter)
 	rhoKey := f.digest.DeriveStreamCipherKey(hopSharedSecrets[routeLen-1])
 	cipherStream, err := f.streamCipher.GenerateStream(rhoKey, betaLen)
 	if err != nil {
