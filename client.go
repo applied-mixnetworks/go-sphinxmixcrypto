@@ -23,13 +23,6 @@ type SphinxParams struct {
 	MaxHops int
 }
 
-func NewSphinxParams(maxHops, payloadSize int) *SphinxParams {
-	return &SphinxParams{
-		PayloadSize: payloadSize,
-		MaxHops:     maxHops,
-	}
-}
-
 // MixHeader contains the sphinx header but not the payload.
 // A version number is also included; TODO: make the version
 // number do something useful.
@@ -140,7 +133,7 @@ func (f *MixHeaderFactory) BuildHeader(route [][16]byte, destination []byte, mes
 	copy(beta[len(destination):], messageID[:])
 	copy(beta[len(destination)+len(messageID):], padding)
 
-	betaLen := uint((2*(f.params.MaxHops-routeLen) + 3) * securityParameter)
+	betaLen := uint((2*routeLen + 1) * securityParameter)
 	rhoKey := f.digest.DeriveStreamCipherKey(hopSharedSecrets[routeLen-1])
 	cipherStream, err := f.streamCipher.GenerateStream(rhoKey, betaLen)
 	if err != nil {
@@ -423,6 +416,9 @@ func (c *SphinxClient) WrapReply(surb *ReplyBlock, message []byte) ([]byte, *Sph
 	ciphertextPayload, err := c.blockCipher.Encrypt(key, paddedPayload)
 	if err != nil {
 		return nil, nil, fmt.Errorf("WrapReply failed to encrypt payload: %v", err)
+	}
+	if len(ciphertextPayload) != c.params.PayloadSize {
+		return nil, nil, fmt.Errorf("WrapReply payload size mismatch error")
 	}
 	sphinxPacket := NewOnionReply(surb.Header, ciphertextPayload)
 	return surb.FirstHop[:], sphinxPacket, nil

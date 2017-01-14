@@ -15,7 +15,11 @@ func TestPrefixFreeDecodeErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	node := NewSphinxNode(options)
+	params := SphinxParams{
+		PayloadSize: 1024,
+		MaxHops:     5,
+	}
+	node := NewSphinxNode(options, &params)
 	s := []byte{}
 	n, _, _ := node.PrefixFreeDecode(s)
 	if n != Failure {
