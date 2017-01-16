@@ -15,6 +15,37 @@ import (
 	"testing"
 )
 
+type VolitileNodeState struct {
+	privateKey  [32]byte
+	publicKey   [32]byte
+	id          [16]byte
+	seenSecrets map[[32]byte]bool
+}
+
+func NewVolitileNodeState() *VolitileNodeState {
+	state := VolitileNodeState{
+		seenSecrets: make(map[[32]byte]bool),
+	}
+	return &state
+}
+
+func (v *VolitileNodeState) GetPrivateKey() [32]byte {
+	return v.privateKey
+}
+
+func (v *VolitileNodeState) Get(tag [32]byte) bool {
+	_, ok := n.seenSecrets[tag]
+	return ok
+}
+
+func (v *VolitileNodeState) Set(tag [32]byte) {
+	v.seenSecrets[tag] = true
+}
+
+func (v *VolitileNodeState) Flush() {
+	v.seenSecrets = make(map[[32]byte]bool)
+}
+
 // FixedNoiseReader is an implementation of io.Reader
 // that can be used as a replacement crypto/rand Reader
 // for the purpose of writing deterministic unit tests.
