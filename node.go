@@ -56,28 +56,33 @@ func PrefixFreeDecode(s []byte) (int, []byte, []byte) {
 // UnwrappedMessage is produced by SphinxNode's Unwrap method
 type UnwrappedMessage struct {
 	ProcessAction int
-	Alpha         []byte
-	Beta          []byte
-	Gamma         []byte
-	Delta         []byte
+	Alpha         []byte // ephemeral key
+	Beta          []byte // routing information
+	Gamma         []byte // MAC
+	Delta         []byte // message body
 	NextHop       []byte
 	ClientID      []byte
 	MessageID     []byte
 }
 
-// SphinxNodeState is an interface for sphinx mix node state
-type SphinxNodeState interface {
+// ReplayCache is an interface for detecting packet replays
+type ReplayCache interface {
 	// Get returns true if the hash value is present in the map
 	Get([32]byte) bool
 	// Set sets a hash value in the map
 	Set([32]byte)
 	// Flush flushes the map
 	Flush()
+}
+
+// PrivateKey interface is used to access the private key so the mix
+// can unwrap packets
+type PrivateKey interface {
 	// GetPrivateKey returns the private key
 	GetPrivateKey() [32]byte
 }
 
-func SphinxPacketUnwrap(params *SphinxParams, state SphinxNodeState, packet *SphinxPacket) (*UnwrappedMessage, error) {
+func SphinxPacketUnwrap(params *SphinxParams, replayCache ReplayCache, privateKey PrivateKey, packet *SphinxPacket) (*UnwrappedMessage, error) {
 	group := NewGroupCurve25519()
 	digest := NewBlake2bDigest()
 	streamCipher := &Chacha20Stream{}
@@ -87,13 +92,13 @@ func SphinxPacketUnwrap(params *SphinxParams, state SphinxNodeState, packet *Sph
 	mixHeader := packet.Header
 	dhKey := mixHeader.EphemeralKey
 	routeInfo := mixHeader.RoutingInfo
-	sharedSecret := group.ExpOn(dhKey, state.GetPrivateKey())
+	sharedSecret := group.ExpOn(dhKey, privateKey.GetPrivateKey())
 	headerMac := mixHeader.HeaderMAC
 	payload := packet.Payload
 
 	// Have we seen it already?
 	tag := digest.HashReplay(sharedSecret)
-	if state.Get(tag) {
+	if replayCache.Get(tag) {
 		return nil, ErrReplayedPacket
 	}
 
@@ -109,7 +114,7 @@ func SphinxPacketUnwrap(params *SphinxParams, state SphinxNodeState, packet *Sph
 		// invalid MAC
 		return nil, errors.New("invalid mac")
 	}
-	state.Set(tag)
+	replayCache.Set(tag)
 	cipherStreamSize := len(routeInfo) + (2 * securityParameter)
 	cipherStream, err := streamCipher.GenerateStream(digest.DeriveStreamCipherKey(sharedSecret), uint(cipherStreamSize))
 	if err != nil {
