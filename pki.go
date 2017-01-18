@@ -25,30 +25,31 @@ type SphinxPKI interface {
 // however this is only really useful for testing
 // mixnet functionality on a single machine.
 type DummyPKI struct {
-	nodeMap map[[16]byte][32]byte
+	nodeKeyStateMap map[[16]byte]*SimpleKeyState
 }
 
 // NewDummyPKI creates a new DummyPKI
-func NewDummyPKI(nodeMap map[[16]byte][32]byte) *DummyPKI {
+func NewDummyPKI(nodeKeyStateMap map[[16]byte]*SimpleKeyState) *DummyPKI {
 	return &DummyPKI{
-		nodeMap: nodeMap,
+		nodeKeyStateMap: nodeKeyStateMap,
 	}
 }
 
 // Get returns the public key for a given identity.
 // PKIKeyNotFound is returned upon failure.
 func (p *DummyPKI) Get(id [16]byte) ([32]byte, error) {
-	pubKey, ok := p.nodeMap[id]
+	nilKey := [32]byte{}
+	_, ok := p.nodeKeyStateMap[id]
 	if ok {
-		return pubKey, nil
+		return p.nodeKeyStateMap[id].publicKey, nil
 	}
-	return pubKey, ErrorPKIKeyNotFound
+	return nilKey, ErrorPKIKeyNotFound
 }
 
 // Identities returns all the identities the PKI knows about.
 func (p *DummyPKI) Identities() [][16]byte {
 	var identities [][16]byte
-	for id := range p.nodeMap {
+	for id := range p.nodeKeyStateMap {
 		identities = append(identities, id)
 	}
 	return identities

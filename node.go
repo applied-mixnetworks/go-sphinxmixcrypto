@@ -9,12 +9,8 @@ package sphinxmixcrypto
 
 import (
 	"bytes"
-	"crypto/rand"
-	"encoding/binary"
 	"errors"
 	"fmt"
-	mathrand "math/rand"
-	"sync"
 
 	"github.com/david415/go-lioness"
 )

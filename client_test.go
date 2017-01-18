@@ -7,12 +7,21 @@
 package sphinxmixcrypto
 
 import (
+	"encoding/hex"
 	"testing"
 )
 
 func TestBuildHeaderErrors(t *testing.T) {
-	nodeKeys, _, route := generateRoute()
-	pki := NewDummyPKI(nodeKeys)
+	route := make([][16]byte, 5)
+	for i := range nodeHexOptions {
+		nodeId, err := hex.DecodeString(nodeHexOptions[i].id)
+		if err != nil {
+			panic(err)
+		}
+		copy(route[i][:], nodeId)
+	}
+	keyStateMap := generateNodeKeyStateMap()
+	pki := NewDummyPKI(keyStateMap)
 	randReader, err := NewFixedNoiseReader("")
 	if err != nil {
 		t.Fatal("unexpected NewFixedNoiseReader err")
