@@ -15,35 +15,38 @@ import (
 	"testing"
 )
 
-type VolitileNodeState struct {
-	privateKey  [32]byte
-	publicKey   [32]byte
-	id          [16]byte
+type SimpleReplayCache struct {
 	seenSecrets map[[32]byte]bool
 }
 
-func NewVolitileNodeState() *VolitileNodeState {
-	state := VolitileNodeState{
+func NewSimpleReplayCache() *SimpleReplayCache {
+	state := SimpleReplayCache{
 		seenSecrets: make(map[[32]byte]bool),
 	}
 	return &state
 }
 
-func (v *VolitileNodeState) GetPrivateKey() [32]byte {
-	return v.privateKey
-}
-
-func (v *VolitileNodeState) Get(tag [32]byte) bool {
+func (v *SimpleReplayCache) Get(tag [32]byte) bool {
 	_, ok := n.seenSecrets[tag]
 	return ok
 }
 
-func (v *VolitileNodeState) Set(tag [32]byte) {
+func (v *SimpleReplayCache) Set(tag [32]byte) {
 	v.seenSecrets[tag] = true
 }
 
-func (v *VolitileNodeState) Flush() {
+func (v *SimpleReplayCache) Flush() {
 	v.seenSecrets = make(map[[32]byte]bool)
+}
+
+type SimpleKeyState struct {
+	privateKey [32]byte
+	publicKey  [32]byte
+	id         [16]byte
+}
+
+func (v *SimpleKeyState) GetPrivateKey() [32]byte {
+	return v.privateKey
 }
 
 // FixedNoiseReader is an implementation of io.Reader
