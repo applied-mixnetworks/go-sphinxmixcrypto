@@ -155,13 +155,7 @@ func generateNodeKeyStateMap() map[[16]byte]*SimpleKeyState {
 		copy(keyState.id[:], nodeID)
 		copy(keyState.publicKey[:], publicKey)
 		copy(keyState.privateKey[:], privateKey)
-		nodeId, err := hex.DecodeString(nodeHexOptions[i].id)
-		if err != nil {
-			panic(err)
-		}
-		nodeIdArr := [16]byte{}
-		copy(nodeIdArr[:], nodeId)
-		nodeKeyStateMap[nodeIdArr] = &keyState
+		nodeKeyStateMap[keyState.id] = &keyState
 	}
 	return nodeKeyStateMap
 }
