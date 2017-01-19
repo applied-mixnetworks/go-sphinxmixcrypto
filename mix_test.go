@@ -49,6 +49,40 @@ func (v *SimpleKeyState) GetPrivateKey() [32]byte {
 	return v.privateKey
 }
 
+// DummyPKI implements the SphinxPKI interface
+// however this is only really useful for testing
+// mixnet functionality on a single machine.
+type DummyPKI struct {
+	nodeKeyStateMap map[[16]byte]*SimpleKeyState
+}
+
+// NewDummyPKI creates a new DummyPKI
+func NewDummyPKI(nodeKeyStateMap map[[16]byte]*SimpleKeyState) *DummyPKI {
+	return &DummyPKI{
+		nodeKeyStateMap: nodeKeyStateMap,
+	}
+}
+
+// Get returns the public key for a given identity.
+// PKIKeyNotFound is returned upon failure.
+func (p *DummyPKI) Get(id [16]byte) ([32]byte, error) {
+	nilKey := [32]byte{}
+	_, ok := p.nodeKeyStateMap[id]
+	if ok {
+		return p.nodeKeyStateMap[id].publicKey, nil
+	}
+	return nilKey, ErrorPKIKeyNotFound
+}
+
+// Identities returns all the identities the PKI knows about.
+func (p *DummyPKI) Identities() [][16]byte {
+	var identities [][16]byte
+	for id := range p.nodeKeyStateMap {
+		identities = append(identities, id)
+	}
+	return identities
+}
+
 // FixedNoiseReader is an implementation of io.Reader
 // that can be used as a replacement crypto/rand Reader
 // for the purpose of writing deterministic unit tests.
