@@ -357,12 +357,12 @@ func ComposeReplyBlock(messageId [16]byte, params *SphinxParams, route [][16]byt
 	mixHeaderFactory := NewMixHeaderFactory(params, pki, randReader)
 	header, hopSharedSecrets, err := mixHeaderFactory.BuildHeader(route, destination[:], messageId)
 	if err != nil {
-		return nil, nil, fmt.Errorf("create nym failure: %v", err)
+		return nil, nil, fmt.Errorf("create reply block failure: %v", err)
 	}
 	var ktilde [32]byte
 	_, err = randReader.Read(ktilde[:])
 	if err != nil {
-		return nil, nil, fmt.Errorf("create nym failure: %s", err)
+		return nil, nil, fmt.Errorf("create reply block failure: %s", err)
 	}
 	keys := [][]byte{}
 	keys = append(keys, ktilde[:])
@@ -370,7 +370,7 @@ func ComposeReplyBlock(messageId [16]byte, params *SphinxParams, route [][16]byt
 	for i := range hopSharedSecrets {
 		key, err := blockCipher.CreateBlockCipherKey(hopSharedSecrets[i])
 		if err != nil {
-			return nil, nil, fmt.Errorf("create nym failure: %s", err)
+			return nil, nil, fmt.Errorf("create reply block failure: %s", err)
 		}
 		keys = append(keys, key[:])
 	}
