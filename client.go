@@ -290,102 +290,54 @@ type ReplyBlock struct {
 	FirstHop [16]byte
 }
 
-// SphinxClient is used for sending and receiving messages
-type SphinxClient struct {
-	params           *SphinxParams
-	id               []byte
-	keysmap          map[[16]byte][][]byte
-	pki              SphinxPKI
-	randReader       io.Reader
-	blockCipher      BlockCipher
-	mixHeaderFactory *MixHeaderFactory
+func (r *ReplyBlock) ComposeForwardMessage(params *SphinxParams, message []byte) ([]byte, *SphinxPacket, error) {
+	blockCipher := NewLionessBlockCipher()
+	key, err := blockCipher.CreateBlockCipherKey(r.Key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("WrapReply failed to create block cipher key: %v", err)
+	}
+	prefixedMessage := make([]byte, securityParameter)
+	prefixedMessage = append(prefixedMessage, message...)
+	paddedPayload, err := AddPadding(prefixedMessage, params.PayloadSize)
+	if err != nil {
+		return nil, nil, fmt.Errorf("WrapReply failed to add padding: %v", err)
+	}
+	ciphertextPayload, err := blockCipher.Encrypt(key, paddedPayload)
+	if err != nil {
+		return nil, nil, fmt.Errorf("WrapReply failed to encrypt payload: %v", err)
+	}
+	if len(ciphertextPayload) != params.PayloadSize {
+		return nil, nil, fmt.Errorf("WrapReply payload size mismatch error")
+	}
+	sphinxPacket := NewOnionReply(r.Header, ciphertextPayload)
+	return r.FirstHop[:], sphinxPacket, nil
 }
 
-// NewSphinxClient creates a new SphinxClient
-func NewSphinxClient(params *SphinxParams, pki SphinxPKI, id []byte, randReader io.Reader) (*SphinxClient, error) {
-	var newID [4]byte
-	if id == nil {
-		_, err := randReader.Read(newID[:])
-		if err != nil {
-			return nil, err
-		}
-		id = []byte(fmt.Sprintf("Client %x", newID))
-	}
-	return &SphinxClient{
-		params:           params,
-		id:               id,
-		keysmap:          make(map[[16]byte][][]byte),
-		pki:              pki,
-		randReader:       randReader,
-		blockCipher:      NewLionessBlockCipher(),
-		mixHeaderFactory: NewMixHeaderFactory(params, pki, randReader),
-	}, nil
+type ReplyBlockDecryptionToken struct {
+	id   [16]byte
+	keys [][]byte
 }
 
-// CreateNym creates a SURB and associates it with a Nym
-func (c *SphinxClient) CreateNym(route [][16]byte) (*ReplyBlock, error) {
-
-	var messageID [securityParameter]byte
-	_, err := c.randReader.Read(messageID[:])
-	if err != nil {
-		return nil, fmt.Errorf("create nym failure: %s", err)
-	}
-	encodedClientID := EncodeDestination(c.id[:])
-
-	header, hopSharedSecrets, err := c.mixHeaderFactory.BuildHeader(route, encodedClientID, messageID)
-	if err != nil {
-		return nil, fmt.Errorf("create nym failure: %v", err)
-	}
-	var ktilde [32]byte
-	_, err = c.randReader.Read(ktilde[:])
-	if err != nil {
-		return nil, fmt.Errorf("create nym failure: %s", err)
-	}
-	keys := [][]byte{}
-	keys = append(keys, ktilde[:])
-	for i := range hopSharedSecrets {
-		key, err := c.blockCipher.CreateBlockCipherKey(hopSharedSecrets[i])
-		if err != nil {
-			return nil, fmt.Errorf("create nym failure: %s", err)
-		}
-		keys = append(keys, key[:])
-	}
-	c.keysmap[messageID] = keys
-	surb := ReplyBlock{
-		Header:   header,
-		Key:      ktilde,
-		FirstHop: route[0],
-	}
-	return &surb, nil
-}
-
-// Decrypt decrypts a reply-message, a message sent to us
-// using a SURB we previously created. The given message ID
-// is used to lookup the correct decryption key.
-func (c *SphinxClient) Decrypt(messageID [securityParameter]byte, payload []byte) ([]byte, error) {
-	var err error
-	keys, ok := c.keysmap[messageID]
-	if !ok {
-		return nil, fmt.Errorf("key for message id %s not found", messageID)
-	}
-	ktilde := keys[0]
-	keys = keys[1:]
-	delete(c.keysmap, messageID)
+func (c *ReplyBlockDecryptionToken) Decrypt(payload []byte) ([]byte, error) {
+	blockCipher := NewLionessBlockCipher()
+	ktilde := c.keys[0]
+	keys := c.keys[1:]
 	var keyArray [lioness.KeyLen]byte
+	var err error
 	for i := len(keys) - 1; i > -1; i-- {
 		copy(keyArray[:], keys[i])
-		payload, err = c.blockCipher.Encrypt(keyArray, payload)
+		payload, err = blockCipher.Encrypt(keyArray, payload)
 		if err != nil {
 			return nil, fmt.Errorf("client decrypt failure: %v", err)
 		}
 	}
 	var k [32]byte
 	copy(k[:], ktilde)
-	blockCipherKey, err := c.blockCipher.CreateBlockCipherKey(k)
+	blockCipherKey, err := blockCipher.CreateBlockCipherKey(k)
 	if err != nil {
 		return nil, errors.New("client decrypt failed to derive a block cipher key")
 	}
-	payload, err = c.blockCipher.Decrypt(blockCipherKey, payload)
+	payload, err = blockCipher.Decrypt(blockCipherKey, payload)
 	if err != nil {
 		return nil, fmt.Errorf("client decrypt failure: %v", err)
 	}
@@ -401,25 +353,35 @@ func (c *SphinxClient) Decrypt(messageID [securityParameter]byte, payload []byte
 	return unpaddedPayload, nil
 }
 
-// WrapReply is used to compose a Single Use Reply Block
-func (c *SphinxClient) WrapReply(surb *ReplyBlock, message []byte) ([]byte, *SphinxPacket, error) {
-	key, err := c.blockCipher.CreateBlockCipherKey(surb.Key)
+func ComposeReplyBlock(messageId [16]byte, params *SphinxParams, route [][16]byte, pki SphinxPKI, destination [16]byte, randReader io.Reader) (*ReplyBlockDecryptionToken, *ReplyBlock, error) {
+	mixHeaderFactory := NewMixHeaderFactory(params, pki, randReader)
+	header, hopSharedSecrets, err := mixHeaderFactory.BuildHeader(route, destination[:], messageId)
 	if err != nil {
-		return nil, nil, fmt.Errorf("WrapReply failed to create block cipher key: %v", err)
+		return nil, nil, fmt.Errorf("create nym failure: %v", err)
 	}
-	prefixedMessage := make([]byte, securityParameter)
-	prefixedMessage = append(prefixedMessage, message...)
-	paddedPayload, err := AddPadding(prefixedMessage, c.params.PayloadSize)
+	var ktilde [32]byte
+	_, err = randReader.Read(ktilde[:])
 	if err != nil {
-		return nil, nil, fmt.Errorf("WrapReply failed to add padding: %v", err)
+		return nil, nil, fmt.Errorf("create nym failure: %s", err)
 	}
-	ciphertextPayload, err := c.blockCipher.Encrypt(key, paddedPayload)
-	if err != nil {
-		return nil, nil, fmt.Errorf("WrapReply failed to encrypt payload: %v", err)
+	keys := [][]byte{}
+	keys = append(keys, ktilde[:])
+	blockCipher := NewLionessBlockCipher()
+	for i := range hopSharedSecrets {
+		key, err := blockCipher.CreateBlockCipherKey(hopSharedSecrets[i])
+		if err != nil {
+			return nil, nil, fmt.Errorf("create nym failure: %s", err)
+		}
+		keys = append(keys, key[:])
 	}
-	if len(ciphertextPayload) != c.params.PayloadSize {
-		return nil, nil, fmt.Errorf("WrapReply payload size mismatch error")
+	decryptionToken := ReplyBlockDecryptionToken{
+		keys: keys,
+		id:   messageId,
 	}
-	sphinxPacket := NewOnionReply(surb.Header, ciphertextPayload)
-	return surb.FirstHop[:], sphinxPacket, nil
+	replyBlock := ReplyBlock{
+		Header:   header,
+		Key:      ktilde,
+		FirstHop: route[0],
+	}
+	return &decryptionToken, &replyBlock, nil
 }

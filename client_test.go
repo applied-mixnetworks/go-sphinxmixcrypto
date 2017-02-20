@@ -22,9 +22,9 @@ func TestBuildHeaderErrors(t *testing.T) {
 	}
 	keyStateMap := generateNodeKeyStateMap()
 	pki := NewDummyPKI(keyStateMap)
-	randReader, err := NewFixedNoiseReader("")
+	randReader, err := NewChachaEntropyReader("47ade5905376604cde0b57e732936b4298281c8a67b6a62c6107482eb69e2941")
 	if err != nil {
-		t.Fatal("unexpected NewFixedNoiseReader err")
+		t.Fatal("err")
 	}
 	params := SphinxParams{
 		MaxHops:     5,
@@ -37,27 +37,8 @@ func TestBuildHeaderErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected headerFactory error")
 	}
-	_, _, err = headerFactory.BuildHeader(route, route[len(route)-1][:], messageID)
-	if err == nil {
-		t.Fatal("expected headerFactory error")
-	}
-
-	// test for padding randReader failure
-	randReader, err = NewFixedNoiseReader("d7314c8d2ba771dbe2982fa6299844f1b92736881e78ae7644f4bccbf8817a69")
-	if err != nil {
-		t.Fatal("unexpected NewFixedNoiseReader err")
-	}
-	headerFactory = NewMixHeaderFactory(&params, pki, randReader)
-	_, _, err = headerFactory.BuildHeader(route, route[len(route)-1][:], messageID)
-	if err == nil {
-		t.Fatal("expected headerFactory error")
-	}
 
 	// test pki lookup failure case
-	randReader, err = NewFixedNoiseReader("eec3843cd06ffe5bd3773548fd405b38d7314c8d2ba771dbe2982fa6299844f1b92736881e78ae7644f4bccbf8817a69")
-	if err != nil {
-		t.Fatal("unexpected NewFixedNoiseReader err")
-	}
 	headerFactory = NewMixHeaderFactory(&params, pki, randReader)
 	var fakeDest [16]byte
 	route[0] = fakeDest

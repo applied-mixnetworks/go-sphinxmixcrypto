@@ -13,6 +13,8 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"git.schwanenlied.me/yawning/chacha20"
 )
 
 type SimpleReplayCache struct {
@@ -83,36 +85,40 @@ func (p *DummyPKI) Identities() [][16]byte {
 	return identities
 }
 
-// FixedNoiseReader is an implementation of io.Reader
-// that can be used as a replacement crypto/rand Reader
-// for the purpose of writing deterministic unit tests.
-type FixedNoiseReader struct {
-	count int
-	noise []byte
+type ChachaEntropyReader struct {
+	cipher *chacha20.Cipher
 }
 
-func NewFixedNoiseReader(noiseStr string) (*FixedNoiseReader, error) {
-	noise, err := hex.DecodeString(noiseStr)
+func NewChachaEntropyReader(keyStr string) (*ChachaEntropyReader, error) {
+	key, err := hex.DecodeString(keyStr)
 	if err != nil {
-		return nil, fmt.Errorf("NewFixedNoiseReader fail: %v", err)
+		return nil, err
 	}
-	return &FixedNoiseReader{
-		count: 0,
-		noise: noise,
-	}, nil
+	var nonce [8]byte
+	cipher, err := chacha20.NewCipher(key[:], nonce[:])
+	if err != nil {
+		return nil, err
+	}
+	reader := ChachaEntropyReader{
+		cipher: cipher,
+	}
+	return &reader, err
 }
 
-func (r *FixedNoiseReader) Read(data []byte) (int, error) {
+func (r *ChachaEntropyReader) Read(data []byte) (int, error) {
 	readLen := len(data)
-	r.count += readLen
-	if len(data) > len(r.noise) {
-		return 0, fmt.Errorf("FixedNoiseReader fail: %d > %d noise", len(data), len(r.noise))
-	}
-	ret := r.noise[:readLen]
-	r.noise = r.noise[readLen:]
-	copy(data, ret)
-
+	buf := make([]byte, readLen)
+	r.cipher.XORKeyStream(data, buf)
 	return readLen, nil
+}
+
+func TestChachaEntropyReader(t *testing.T) {
+	randReader, err := NewChachaEntropyReader("47ade5905376604cde0b57e732936b4298281c8a67b6a62c6107482eb69e2941")
+	if err != nil {
+		t.Fatalf("fail: %#v", err)
+	}
+	fu := [32]byte{}
+	randReader.Read(fu[:])
 }
 
 type ExpectedState struct {
@@ -216,9 +222,9 @@ func TestSphinxNodeReplay(t *testing.T) {
 	copy(keyState.privateKey[:], privateKey)
 	pki := NewDummyPKI(keyStateMap)
 	// this fake entropy source makes this test deterministic
-	randReader, err := NewFixedNoiseReader("b5451d2eb2faf3f84bc4778ace6516e73e9da6c597e6f96f7e63c7ca6c9456018be9fd84883e4469a736c66fcaeceacf080fb06bc45859796707548c356c462594d1418b5349daf8fffe21a67affec10c0a2e3639c5bd9e8a9ddde5caf2e1db802995f54beae23305f2241c6517d301808c0946d5895bfd0d4b53d8ab2760e4ec8d4b2309eec239eedbab2c6ae532da37f3b633e256c6b551ed76321cc1f301d74a0a8a0673ea7e489e984543ca05fe0ff373a6f3ed4eeeaafd18292e3b182c25216aeb8")
+	randReader, err := NewChachaEntropyReader("47ade5905376604cde0b57e732936b4298281c8a67b6a62c6107482eb69e2941")
 	if err != nil {
-		t.Fatalf("NewFixedNoiseReader fail: %#v", err)
+		t.Fatalf("fail: %#v", err)
 	}
 	params := SphinxParams{
 		MaxHops:     5,
@@ -292,11 +298,14 @@ func MixStateMachine(firstHop [16]byte, replayCacheMap map[[16]byte]*SimpleRepla
 				break
 			}
 			if bytes.Equal(decodedHop[:], hop[:]) {
+				// fmt.Printf("ALPHA %x\n", unwrappedMessage.Alpha)
+				// fmt.Printf("BETA %x\n", unwrappedMessage.Beta)
+				// fmt.Printf("GAMMA %x\n", unwrappedMessage.Gamma)
+				// fmt.Printf("DELTA %x\n", unwrappedMessage.Delta)
 				err = EqualHexBytes(expected.alpha, unwrappedMessage.Alpha)
 				if err != nil {
-					unwrappedMessage = nil
 					err = errors.New("alpha mismatch")
-					fmt.Printf("unwrapped alpha %v != expected alpha %v\n", expected.alpha, unwrappedMessage.Alpha)
+					unwrappedMessage = nil
 					break
 				}
 				err = EqualHexBytes(expected.beta, unwrappedMessage.Beta)
@@ -352,36 +361,40 @@ func TestSURB(t *testing.T) {
 	}
 	pki := NewDummyPKI(keyStateMap)
 	// this fake entropy source makes this test deterministic
-	randReader, err := NewFixedNoiseReader("b5451d2eb2faf3f84bc4778ace6516e73e9da6c597e6f96f7e63c7ca6c9456018be9fd84883e4469a736c66fcaeceacf080fb06bc45859796707548c356c462594d1418b5349daf8fffe21a67affec10c0a2e3639c5bd9e8a9ddde5caf2e1db802995f54beae23305f2241c6517d301808c0946d5895bfd0d4b53d8ab2760e4ec8d4b2309eec239eedbab2c6ae532da37f3b633e256c6b551ed76321cc1f301d74a0a8a0673ea7e489e984543ca05fe0ff373a6f3ed4eeeaafd18292e3b182c25216aeb8")
+	randReader, err := NewChachaEntropyReader("47ade5905376604cde0b57e732936b4298281c8a67b6a62c6107482eb69e2941")
 	if err != nil {
-		t.Fatalf("NewFixedNoiseReader fail: %v", err)
+		t.Fatalf("fail: %v", err)
 	}
 	params := SphinxParams{
 		MaxHops:     5,
 		PayloadSize: 1024,
 	}
-	client, err := NewSphinxClient(&params, pki, nil, randReader)
+	clientId, err := hex.DecodeString("0f436c69656e74206665656463383061")
 	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
+		t.Fatalf("fail: %v", err)
 	}
-	surb, err := client.CreateNym(route)
+	messageId, err := hex.DecodeString("ff81855a360000000000000000000000")
+	messageIdAr := [16]byte{}
+	copy(messageIdAr[:], messageId)
+	destination := [16]byte{}
+	copy(destination[:], clientId)
+	decryptionToken, replyBlock, err := ComposeReplyBlock(messageIdAr, &params, route, pki, destination, randReader)
 	if err != nil {
-		t.Fatalf("failed to create SURB: %v", err)
+		panic(err)
 	}
 	message := []byte("Open, secure and reliable connectivity is necessary (although not sufficient) to excercise the human rights such as freedom of expression and freedom of association [FOC], as defined in the Universal Declaration of Human Rights [UDHR].")
-	firstHop, sphinxPacket, err := client.WrapReply(surb, message)
+	firstHop, sphinxPacket, err := replyBlock.ComposeForwardMessage(&params, message)
 	if err != nil {
-		t.Fatalf("failed to wrap reply: %v", err)
+		panic(err)
 	}
-
 	var hop [16]byte
 	copy(hop[:], firstHop)
 	expected := ExpectedState{
 		hop:   "ff81855a360000000000000000000000",
-		alpha: "cbe28bea4d68103461bc0cc2db4b6c4f38bc82af83f5f1de998c33d46c15f72d",
-		beta:  "a5578dc72fcea3501169472b0877ca46627789750820b29a3298151e12e04781645f6007b6e773e4b7177a67adf30d0ec02c472ddf7609eba1a1130c80789832fb201eed849c02244465f39a70d7520d641be371020083946832d2f7da386d93b4627b0121502e5812209d674b3a108016618b2e9f210978f46faaa2a7e97a4d678a106631581cc51120946f5915ee2bfd9db11e5ec93ae7ffe4d4dc8ab66985cfe9da441b708e4e5dc7c00ea42abf1a",
-		gamma: "976fdfd8262dbb7557c988588ac9a204",
-		delta: "0a9411a57044d20b6c4004c730a78d79550dc2f22ba1c9c05e1d15e0fcadb6b1b353f028109fd193cb7c14af3251e6940572c7cd4243977896504ce0b59b17e8da04de5eb046a92f1877b55d43def3cc11a69a11050a8abdceb45bc1f09a22960fdffce720e5ed5767fbb62be1fd369dcdea861fd8582d01666a08bf3c8fb691ac5d2afca82f4759029f8425374ae4a4c91d44d05cb1a64193319d9413de7d2cfdffe253888535a8493ab8a0949a870ae512d2137630e2e4b2d772f6ee9d3b9d8cadd2f6dc34922701b21fa69f1be6d0367a26c2875cb7afffe60d59597cc084854beebd80d559cf14fcb6642c4ab9102b2da409685f5ca9a23b6c718362ccd6405d993dbd9471b4e7564631ce714d9c022852113268481930658e5cee6d2538feb9521164b2b1d4d68c76967e2a8e362ef8f497d521ee0d57bcd7c8fcc4c673f8f8d700c9c71f70c73194f2eddf03f954066372918693f8e12fc980e1b8ad765c8806c0ba144b86277170b12df16b47de5a2596b2149c4408afbe8f790d3cebf1715d1c4a9ed5157b130a66a73001f6f344c74438965e85d3cac84932082e6b17140f6eb901e3de7b3a16a76bdde2972c557d573830e8a455973de43201b562f63f5b3dca8555b5215fa138e81da900358ddb4d123b57b4a4cac0bfebc6ae3c7d54820ca1f3ee9908f7cb81200afeb1fdafdfbbc08b15d8271fd18cfd7344b36bdd16cca082235c3790888dae22e547bf436982c1a1935e2627f1bb16a3b4942f474d2ec1ff15eb6c3c4e320892ca1615ecd462007e51fbc69817719e6d641c101aa153bff207974bbb4f9553a8d6fb0cfa2cb1a497f9eee32f7c084e97256c72f06f020f33a0c079f3f69c2ce0e2826cc396587d80c9485e26f70633b70ad2e2d531a44407d101628c0bdae0cd47d6032e97b73e1231c3db06a2ead13eb20878fc198a345dd9dafc54b0cc56bcf9aa64e85002ff91a3f01dc97de5e85d68707a4909385cefbd6263cf9624a64d9052291da48d33ac401854cce4d6a7d21be4b5f1f4616e1784226603fdadd45d802ab226c81ec1fc1827310c2c99ce1c7ee28f38fbc7cf637132a1a2b1e5835762b41f0c7180a7738bac5cedebc11cdbf229e2155a085349b93cb94ce4285ea739673cc719e46cacb56663564057df1a0a2f688ed216336ff695337d6922f0185c23c3c04294388da192d9ae2b51ff18a8cc4d3212e1b2b19fed7b8f3662c2f9bd463f75e1e7c738db6b204f8f5aa8176e238d41c8d828b124e78c294be2d5b2bf0724958b787b0bea98d9a1534fc9975d66ee119b47b2e3017c9bba9431118c3611840b0ddcb00450024d484080d29c3896d92913eaca52d67f313a482fcc6ab616673926bdbdb1a2e62bcb055755ae5b3a975996e40736fde300717431c7d7b182369f90a092aef94e58e0ea5a4b15e76d",
+		alpha: "b00eb0894f1b49530150c33cc4055cf3b97f3cac22f03f25050394bf5d80c954",
+		beta:  "1c162721f4896fa5054be6dec39a00dc8efdf23c574de810ed5e5dca8b0d0ef0b410306377c251f3cb855f466b3f7b696dda60a914e03d6e537fe3e712cbb98e414e0cfec3fd14f0e79b66fc0338820aabb680cc6cb9274b836852bd737ecc121e828697675fc839ebf820ba9d53e17f94b5bad2631f915ae059d4e37fa04b776158f306d92ce2bce232f60412feff11c754450970bba6a318e45f9ce9210202d669c7bf7c38eb1c14b9cda4e6311eba",
+		gamma: "eff2a11d309fa2c07832c1ecb0917078",
+		delta: "aac22e90370689f1ef5ded95cc593b4c7fd5b796df440ebfe5ae1a90921312d89bbf76eda53b23a18c6dab15966fd4a4806099b28d6b06723087586e5c56aded125f6c067edccb8322a1696a892498d8d6cfdca2a758d0687b5c6a8a8207e04c0810e2c95da8db03fd5e4f91326b23cd9ccebd403bab33d59184aff393cc26779fbb56d80c10ff10507a9fc24cc61d00f27d27f076439f3c06f97ffbc97a02918aba1d2aceac013ec22d528148295f5e501559d9ed4d9f8064aca4c0ab3542678b24144f1814869d34a536ae2b4f2c6f330cd9f579f048dc592059b126feae908815f1fc4557aabfb559aa218b37b83270e5da67fc0eab152b1971701906ebaf6b7a9510cb766c975ca984098063f079f2fbb7108a59feb87983a15e9cb50cc8b3c8b7c6bdfe435b7feade94be9193df304b4eb09ec7490774b6cbfd7d86663ba59685d3beadcb82cab429bcb7244a5d06e58b3172b858bc87a3b6db5260a5a2cc476dd9b959416e286e8e3579460c9257bcdf3564319d92bd66d1bafe47ddea32f202cdb1f0bf64ef23abb37b251026437a1dc6e260dbf63d387067b35a27ea70fd6cde2a2f6037b58f433bc22f18d944c90e05ab9d8b22ef06ad8ce3ac98afb39f0ec823f64ee8b620ab332b65b275f2b11ddd722ba51771286add25193b8dbbee47bf188f78aea393337a50c2353910a849abe81a30d77ffdb3483480ff81af8d5d298c912606c1a92eac84e37c9ac24885b8e8bfd39fdfe68dbb2e3bf2bbd87bdb8c7fcda8d4cbb80706530d13aff83d53e3fd5aa02a7544c910c8b4a73366bd388bb3459d3501195b6a7a4dd03703948ae78811bf4996f0be68c8c6340c6a4df620f8c4a9dce6bd20d1fd6e1ce15bc885821bc35c0ffbf367e05b48329bb40d81461360c4921441cfff72a0cc4e6697ad709a05b503ab29364d01daa74a26e1fb548a8d5aebba97696c2fee10ca9f871f954f647c0233d50ec0fb48b5cc47a5c2b4493250ad35029f0e1da8f0a9088178d1ef8264e6d24d8d1580afb1bf816c0bb65c6022ef718775ca207c358cb15e50805b297c6a5d129cfc8e609dca434fb07f09ed199d8f9e7254622ee3e136c43b4e36f287ed857f526f08a3835ac5e8c9f1242e08cb7db38747c5c129a468b2d4035c12ee66ed75f72dda853bbf5ac2920dc6726c72f8e3be2058ad985ac8c2e0263b3ebece2857a2eb0d4f76b3330ac378ceaff1b809226d9de4088943d4a8e834dc3f9ef5dbdfc55991e6fa4cf9c6f5e44119fea12ecbb2d699302f53d4809c87e0fd9c331b283a29fbaffaf66af1c931f16c32c3ae2f4459240ceb6170760f785a1156d6bf568a69c594857abd8a826d5fa38d5d59e1bd034736a97bd221304950687186474bc9aab6b8315647c84b0925a026c03dc795f015a6ce345d7f76a02a11ff28518ddcaf99547ab7",
 	}
 	unwrappedMessage, err := MixStateMachine(hop, replayCacheMap, keyStateMap, sphinxPacket, expected)
 	if err != nil {
@@ -389,11 +402,11 @@ func TestSURB(t *testing.T) {
 	}
 	var messageID [16]byte
 	copy(messageID[:], unwrappedMessage.MessageID)
-	payload, err := client.Decrypt(messageID, unwrappedMessage.Delta)
+	plaintext, err := decryptionToken.Decrypt(unwrappedMessage.Delta)
 	if err != nil {
 		t.Fatalf("client decrypt failure: %v", err)
 	}
-	if !bytes.Equal(message, payload[:]) {
+	if !bytes.Equal(message, plaintext[:]) {
 		t.Fatal("client decrypted message mismatch")
 	}
 }
@@ -408,9 +421,9 @@ func TestVectorsSendMessage(t *testing.T) {
 	}
 	pki := NewDummyPKI(keyStateMap)
 	// this fake entropy source makes this test deterministic
-	randReader, err := NewFixedNoiseReader("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b43c78e065c89b26bc7b498dd6c0f24925c67a7ac0d4a191937bc7698f650391")
+	randReader, err := NewChachaEntropyReader("47ade5905376604cde0b57e732936b4298281c8a67b6a62c6107482eb69e2941")
 	if err != nil {
-		t.Fatalf("NewFixedNoiseReader fail: %#v", err)
+		t.Fatalf("fail: %#v", err)
 	}
 	params := SphinxParams{
 		MaxHops:     5,
@@ -425,10 +438,10 @@ func TestVectorsSendMessage(t *testing.T) {
 	copy(firstHop[:], route[0][:])
 	expected := ExpectedState{
 		hop:   "ff81855a360000000000000000000000",
-		alpha: "b9bc2a81df782c98a8e2b8560dc50647e2f3c013ed563b021df3e0b45378d66c",
-		beta:  "9f486475acc1bd3bc551700f58108ea4029a250b5e893eaaf8aeb0811d84094816b3904f69d45921448454de0eb18bfda49832492a127a5682231d3848a3cb06ca17c3427063f80d662997b30bc9307a676cd6972716d1d6ee59b657f368b0fdb0245872e5157dd3de788341518c328395b415b516bd47efb86302edf840eebd9de432e08d6b9fddd4d55f75112332e403d78e536193aa172c0dbffbc9631d8c877214abef61d54bd0a35114e5f0eace",
-		gamma: "59f86271afb940c9e7c187b9966b9a42",
-		delta: "320e9422cb6ecdc8de8cebacf32dd676d9e8142070856275ff39efacc39d09ff61f75f2633c232015f638d4ac72ee211b41d1f3351f600b47c1638640956fff1f00f61a744a4df75ed730de2eb3b5bb4fa65df8d775d606705ccf0ce8f66a444f04dfaee50c0d23c4ae1b217bf28e49db77df4b91aba049514ed1c8f55648f176b4a9d3045433d838063a830523e6e5bdc53e0278734436df2a3936df05b2ae68fadf26e7913216606ec1dbcd64cf54e0f63bd03e08bcd7d73eb6336d70104b1f85c0d8086a4da656d1bdc24b91cc443efa9022223af8d651d04b5611931cd7d91fe4a5ef031e0409ff80fc398e350fe9307d9b3c673b60c162c5581630ae7733f947a214979f7e7ef8e8481a1e59eec700d92e6d8ca279a06d4ff3c6f960c74b6473842c44323576b383de01a4b16077fe740d6f3dfabad6fc85d3b972dccca9eb9040f9b2df3b21e7e679df41d6a5750df3c9da5a9ca2a5d9a7b233378a195e7ec995fc588fef6f537ec082d7b755dffee56646bc75f7f38bdb91945e3aa6aeee0fe5cd31eed271e69b930a9893e3dc0ca8516afa382eb72fab61e915b8b70babef87a69460fec2e26a3c34983271766746f034c4562d62d494e70b444b6ff7d71f866133858fece4baaa18442a7528a0cba298169c3c315b00369569a23040d26db6df452a7d79f7ed2e7aebcdee23f34765f0f91917a00353c4692f64c20f4517cd7826f1962dd3fcda86a4ba0772fb5d9466ab340359233bf6452f4b5cd208f5a40114a1ceed1fb643a4e7bb676bcb16bd8eb78b0082a3a1dcc17f84f984c820885ac90cc9f249fec002d929747875f4fb31752d5d586addb512e122256e4c1350e7df34a2c1d708f4a4f51ce5527e2b9757a4cf199be26d53124fe0ac965694723224b9fbccf78ad3c2d873d480569b853ffdb526b9a5b9f17d26f27cad103237e19e69c24cc8d27637f1cbef38aa93eb5d221878d806373579e1760facd50690926260a3ae0a544f5788ef11d03266295d6794b1ba3d5861aa715b1e989f09fe3ed645ba6a5ccb9b4474d874189f149d9617bc0cf3f071aaa04d3f2d7a5d8b143b234f266dfcbd892ba502215785c39abf98b5617c4b2a4c9284d562f8c26da44200fbd526a4469677cb925a6a26322ac2e651df6f32b3fe0fc393a6eab18a48b7d2c54346ae5cc0ffcb539adf0ce398d180f78577427749a8c99edf55f91677fcc451762978b384966baeb63b20d4ad7e5ec2f9bc63812ffb8a14074cbca66bd80b3df6cb50024f332f4c466efb5bed156845d3deb6785df4d1dc99021ce70a1cd575b7e65739ee7e02baf955605ee3cc9e335e811bd28eda3482fa8cd25e50e56950828bc0bfe3d0489b0149242c4e5d39d7d4f8f1b049c530e8e827359573bcc18abcc30ee639341375b56cb6ffc5702e0912955059ee974bc603f",
+		alpha: "b00eb0894f1b49530150c33cc4055cf3b97f3cac22f03f25050394bf5d80c954",
+		beta:  "13554b4891e71b85632e83baa0a230bd710b818a9d94863c7732deb742c167b3570b6799f99ff76c94bc58b613ff073e6dda60a914e03d6e537fe3e712cbb98e414e0cfec3fd14f0e79b66fc0338820aabb680cc6cb9274b836852bd737ecc121e828697675fc839ebf820ba9d53e17f94b5bad2631f915ae059d4e37fa04b776158f306d92ce2bce232f60412feff11c754450970bba6a318e45f9ce9210202d669c7bf7c38eb1c14b9cda4e6311eba",
+		gamma: "0b747d558acd9d59ceedc1f876634644",
+		delta: "0269f1c546605e56162c97ed66054a14565e868193f159b1f25f962bb29a94581826586f955fff0841a9266bc6cb75aa8f217c6d2998bdbdf3782e0e0e8eaa2d3e159ccecccb12c7476d015de13daa6e4d757cf979abadba7e8a92153e5f28f56c94f084d3a9da487ff4a1f478b470f89c74e18179e7aff47e82710f973952a66043d341e27d54370506d63344a6fc738d39d1af3cc1d8394aeaf46a286688c9882fc95077a6b0b438cda481400e56debd0468aa9d5656a7e920ce0882bd07bee35801389ceb9a377a399e639a1d257d7ecd047c161f273faf1026ce5c3f7e5855865be24f53bb48e34dea1bad0c688c4c07564d8d771a8ad8ce980520d81da565a7da0e9e70eb1e975621729f146f090d8ad5e475ed42b4d68993c8ff7a75aaab4ef29d620b4caf5761a41887f3952950bc974468ef4381ebd8dc36dee74f9e1603c195527d84f45bcb18f9161ce5ba989abbc8fe887bbf90c6e2aa453f728bfdef11b776fff9796d8e3affe7b945a38f50285eb9e3dd3697082f0bbd554ea9f5c31e57c1e7f252fe76b69d7af55c9668688d1114de093c6c837dcd8a2836d3ed5199171860288806111893a468666e9ac83562d02d660f183451dbfdd094d26a988ae4bf67a86ae56fbef6a1a8cf53fa304ec41ac93a80c5b68a29e2fa195fa4b165659bf4dc6e2cff12becb34e5c7c6fa567868483f1ced888a441412408f51cff75c3e31d2535d95f9029017d02d993f6bd4b14b9f9d819a207afa7b38a4f70af0c93a3234c96a612f2633e456f2d09bd334fa8015a39f762c301e9fdcf4c525f2549e228dd10ea8549620606ac893a2a299644678ebb8872a217374289a4f75c638268929064f1f5ff51b4aa142fac7fe63d6b155fcc8539c34405635b9da0b7602dba8b6df82335ef03cc9afcc818761f1f4c87ac9e6a39caa249a99131492a8e48de7af9caf3aea7448936d6d2ce9b24f8a53385377196d16e69de43cb84ce6435a68d4e10fbcefeefeca20023ae76d34c7405f16d33d726073052985189cd4ec92d7a4d8cedf29e10a56c27fd5aa2be904d823a4b345bb2f4ae2e7c8ccc95a2e144fa012ad44bf7ee811f51965d90b60c590ab6794868e1d76b7678202a37473e6bd945ced2bd7802b7a5117cb87af00a43d5edae7830bdeb72440d071ce24fe59c4610fc7119044bd3f5d60aeabcc394f020e8e300ad0fe9b58023ca6470345514dab5a7212ce17b612094fadfc7f6e3d5542bff77f80e785064307d5ec8c26b80f06fb3b7d4d6f4c42b647564f4ba05371ef8c02f1fd32a2ae7522425136ab6eb8206f2e0094d78b644b7057aad1d2afa5f9e6abf082da932076cf63b173a1eef549ba18522200748705bac31e950849826a153185f9180aa71553fdb25152ac2a1674c8b007ba78274af411363b6dab068c3d0ceaec2873d96ba7",
 	}
 	unwrappedMessage, err := MixStateMachine(firstHop, replayCacheMap, keyStateMap, sphinxPacket, expected)
 
@@ -463,9 +476,9 @@ func BenchmarkUnwrapSphinxPacket(b *testing.B) {
 	copy(keyState.privateKey[:], privateKey)
 	pki := NewDummyPKI(keyStateMap)
 	// this fake entropy source makes this test deterministic
-	randReader, err := NewFixedNoiseReader("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b43c78e065c89b26bc7b498dd6c0f24925c67a7ac0d4a191937bc7698f650391")
+	randReader, err := NewChachaEntropyReader("47ade5905376604cde0b57e732936b4298281c8a67b6a62c6107482eb69e2941")
 	if err != nil {
-		b.Fatalf("NewFixedNoiseReader fail: %#v", err)
+		b.Fatalf("fail: %#v", err)
 	}
 	params := SphinxParams{
 		MaxHops:     5,
@@ -500,7 +513,7 @@ func BenchmarkComposeSphinxPacket(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		// this fake entropy source makes this test deterministic
-		randReader, err := NewFixedNoiseReader("82c8ad63392a5f59347b043e1244e68d52eb853921e2656f188d33e59a1410b43c78e065c89b26bc7b498dd6c0f24925c67a7ac0d4a191937bc7698f650391")
+		randReader, err := NewChachaEntropyReader("47ade5905376604cde0b57e732936b4298281c8a67b6a62c6107482eb69e2941")
 		if err != nil {
 			b.Fatalf("unexpected an error: %v", err)
 		}
