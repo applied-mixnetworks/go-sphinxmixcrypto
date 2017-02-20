@@ -78,6 +78,8 @@ type PrivateKey interface {
 	GetPrivateKey() [32]byte
 }
 
+// SphinxPacketUnwrap performs the decryption operation that a mix would perform
+// An error is returned if the MAC doesn't match or if a packet is replayed.
 func SphinxPacketUnwrap(params *SphinxParams, replayCache ReplayCache, privateKey PrivateKey, packet *SphinxPacket) (*UnwrappedMessage, error) {
 	group := NewGroupCurve25519()
 	digest := NewBlake2bDigest()

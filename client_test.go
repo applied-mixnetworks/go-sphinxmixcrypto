@@ -14,11 +14,11 @@ import (
 func TestBuildHeaderErrors(t *testing.T) {
 	route := make([][16]byte, 5)
 	for i := range nodeHexOptions {
-		nodeId, err := hex.DecodeString(nodeHexOptions[i].id)
+		nodeID, err := hex.DecodeString(nodeHexOptions[i].id)
 		if err != nil {
 			panic(err)
 		}
-		copy(route[i][:], nodeId)
+		copy(route[i][:], nodeID)
 	}
 	keyStateMap := generateNodeKeyStateMap()
 	pki := NewDummyPKI(keyStateMap)

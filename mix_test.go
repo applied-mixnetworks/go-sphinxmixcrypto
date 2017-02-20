@@ -137,13 +137,13 @@ var testRoute = []string{"ff2182654d0000000000000000000000", "ff0f9a627800000000
 func getTestRoute() [][16]byte {
 	route := [][16]byte{}
 	for i := range testRoute {
-		nodeId, err := hex.DecodeString(testRoute[i])
+		nodeID, err := hex.DecodeString(testRoute[i])
 		if err != nil {
 			panic("wtf")
 		}
-		nodeIdArr := [16]byte{}
-		copy(nodeIdArr[:], nodeId)
-		route = append(route, nodeIdArr)
+		nodeIDArr := [16]byte{}
+		copy(nodeIDArr[:], nodeID)
+		route = append(route, nodeIDArr)
 	}
 	return route
 }
@@ -355,9 +355,9 @@ func TestSURB(t *testing.T) {
 	keyStateMap := generateNodeKeyStateMap()
 	replayCacheMap := make(map[[16]byte]*SimpleReplayCache)
 	route := getTestRoute()
-	for nodeId, _ := range keyStateMap {
+	for nodeID := range keyStateMap {
 		replayCache := NewSimpleReplayCache()
-		replayCacheMap[nodeId] = replayCache
+		replayCacheMap[nodeID] = replayCache
 	}
 	pki := NewDummyPKI(keyStateMap)
 	// this fake entropy source makes this test deterministic
@@ -369,16 +369,16 @@ func TestSURB(t *testing.T) {
 		MaxHops:     5,
 		PayloadSize: 1024,
 	}
-	clientId, err := hex.DecodeString("0f436c69656e74206665656463383061")
+	clientID, err := hex.DecodeString("0f436c69656e74206665656463383061")
 	if err != nil {
 		t.Fatalf("fail: %v", err)
 	}
-	messageId, err := hex.DecodeString("ff81855a360000000000000000000000")
-	messageIdAr := [16]byte{}
-	copy(messageIdAr[:], messageId)
+	messageID, err := hex.DecodeString("ff81855a360000000000000000000000")
+	messageIDAr := [16]byte{}
+	copy(messageIDAr[:], messageID)
 	destination := [16]byte{}
-	copy(destination[:], clientId)
-	decryptionToken, replyBlock, err := ComposeReplyBlock(messageIdAr, &params, route, pki, destination, randReader)
+	copy(destination[:], clientID)
+	decryptionToken, replyBlock, err := ComposeReplyBlock(messageIDAr, &params, route, pki, destination, randReader)
 	if err != nil {
 		panic(err)
 	}
@@ -400,7 +400,6 @@ func TestSURB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MixStateMachine failed: %v", err)
 	}
-	var messageID [16]byte
 	copy(messageID[:], unwrappedMessage.MessageID)
 	plaintext, err := decryptionToken.Decrypt(unwrappedMessage.Delta)
 	if err != nil {
@@ -416,8 +415,8 @@ func TestVectorsSendMessage(t *testing.T) {
 	keyStateMap := generateNodeKeyStateMap()
 	replayCacheMap := make(map[[16]byte]*SimpleReplayCache)
 	route := getTestRoute()
-	for nodeId, _ := range keyStateMap {
-		replayCacheMap[nodeId] = NewSimpleReplayCache()
+	for nodeID := range keyStateMap {
+		replayCacheMap[nodeID] = NewSimpleReplayCache()
 	}
 	pki := NewDummyPKI(keyStateMap)
 	// this fake entropy source makes this test deterministic

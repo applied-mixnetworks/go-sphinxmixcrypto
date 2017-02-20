@@ -16,6 +16,7 @@ import (
 	"github.com/david415/go-lioness"
 )
 
+// SphinxParams are the mixnet parameters
 type SphinxParams struct {
 	// PayloadSize is the packet payload size
 	PayloadSize int
@@ -290,6 +291,7 @@ type ReplyBlock struct {
 	FirstHop [16]byte
 }
 
+// ComposeForwardMessage produces a sphinx packet from the reply block and a message
 func (r *ReplyBlock) ComposeForwardMessage(params *SphinxParams, message []byte) ([]byte, *SphinxPacket, error) {
 	blockCipher := NewLionessBlockCipher()
 	key, err := blockCipher.CreateBlockCipherKey(r.Key)
@@ -313,11 +315,15 @@ func (r *ReplyBlock) ComposeForwardMessage(params *SphinxParams, message []byte)
 	return r.FirstHop[:], sphinxPacket, nil
 }
 
+// ReplyBlockDecryptionToken represents a decryption
+// token that can be used to decrypt a ciphertext blob
+// produce and delivered by a ReplyBlock
 type ReplyBlockDecryptionToken struct {
 	id   [16]byte
 	keys [][]byte
 }
 
+// Decrypt decrypts a ciphertext blob produced by a ReplyBlock
 func (c *ReplyBlockDecryptionToken) Decrypt(payload []byte) ([]byte, error) {
 	blockCipher := NewLionessBlockCipher()
 	ktilde := c.keys[0]
@@ -353,9 +359,11 @@ func (c *ReplyBlockDecryptionToken) Decrypt(payload []byte) ([]byte, error) {
 	return unpaddedPayload, nil
 }
 
-func ComposeReplyBlock(messageId [16]byte, params *SphinxParams, route [][16]byte, pki SphinxPKI, destination [16]byte, randReader io.Reader) (*ReplyBlockDecryptionToken, *ReplyBlock, error) {
+// ComposeReplyBlock produces a reply block and the corresponding
+// decryption token
+func ComposeReplyBlock(messageID [16]byte, params *SphinxParams, route [][16]byte, pki SphinxPKI, destination [16]byte, randReader io.Reader) (*ReplyBlockDecryptionToken, *ReplyBlock, error) {
 	mixHeaderFactory := NewMixHeaderFactory(params, pki, randReader)
-	header, hopSharedSecrets, err := mixHeaderFactory.BuildHeader(route, destination[:], messageId)
+	header, hopSharedSecrets, err := mixHeaderFactory.BuildHeader(route, destination[:], messageID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create reply block failure: %v", err)
 	}
@@ -376,7 +384,7 @@ func ComposeReplyBlock(messageId [16]byte, params *SphinxParams, route [][16]byt
 	}
 	decryptionToken := ReplyBlockDecryptionToken{
 		keys: keys,
-		id:   messageId,
+		id:   messageID,
 	}
 	replyBlock := ReplyBlock{
 		Header:   header,
